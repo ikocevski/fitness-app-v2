@@ -23,41 +23,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [status, setStatus] = useState<AVPlaybackStatus | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
-  const [retryCount, setRetryCount] = useState(0);
 
-  const normalizedVideoUrl = React.useMemo(() => {
-    const iframeMatch = videoUrl.match(
-      /iframe\.mediadelivery\.net\/embed\/(\d+)\/([a-zA-Z0-9-]+)/,
-    );
-    if (iframeMatch?.[1] && iframeMatch?.[2]) {
-      return `https://vz-${iframeMatch[1]}.b-cdn.net/${iframeMatch[2]}/playlist.m3u8`;
-    }
-    return videoUrl;
+  // Check if this is a Bunny embed URL (standardized format)
+  const isBunnyEmbedUrl = React.useMemo(() => {
+    return videoUrl?.includes("iframe.mediadelivery.net/embed");
   }, [videoUrl]);
-
-  const bunnyMatch = React.useMemo(() => {
-    const iframeMatch = videoUrl.match(
-      /iframe\.mediadelivery\.net\/embed\/(\d+)\/([a-zA-Z0-9-]+)/,
-    );
-    if (iframeMatch?.[1] && iframeMatch?.[2]) {
-      return { libraryId: iframeMatch[1], videoId: iframeMatch[2] };
-    }
-
-    const hlsMatch = normalizedVideoUrl.match(
-      /vz-(\d+)\.b-cdn\.net\/([a-zA-Z0-9-]+)\/playlist\.m3u8/,
-    );
-    if (hlsMatch?.[1] && hlsMatch?.[2]) {
-      return { libraryId: hlsMatch[1], videoId: hlsMatch[2] };
-    }
-
-    return null;
-  }, [videoUrl, normalizedVideoUrl]);
-
-  const bunnyIframeUrl = bunnyMatch
-    ? `https://iframe.mediadelivery.net/embed/${bunnyMatch.libraryId}/${bunnyMatch.videoId}?autoplay=false&preload=true`
-    : null;
-
-  const isBunnyVideo = Boolean(bunnyIframeUrl);
 
   const handlePlayPause = async () => {
     if (!videoRef.current) return;
@@ -71,10 +41,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   return (
     <View style={styles.container}>
-      {isBunnyVideo && bunnyIframeUrl ? (
+      {isBunnyEmbedUrl ? (
+        // Use WebView for Bunny iframe embed
         <WebView
-          key={`bunny-${retryCount}`}
-          source={{ uri: bunnyIframeUrl }}
+          source={{ uri: videoUrl }}
           style={styles.video}
           javaScriptEnabled
           domStorageEnabled
@@ -85,15 +55,17 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
             setHasError(false);
           }}
           onLoadEnd={() => setIsLoading(false)}
-          onError={() => {
+          onError={(syntheticEvent) => {
             setIsLoading(false);
             setHasError(true);
+            console.error("WebView error:", syntheticEvent.nativeEvent);
           }}
         />
       ) : (
+        // Fallback to native Video player (for HLS or other formats)
         <Video
           ref={videoRef}
-          source={{ uri: normalizedVideoUrl }}
+          source={{ uri: videoUrl }}
           style={styles.video}
           resizeMode={ResizeMode.CONTAIN}
           useNativeControls
@@ -118,7 +90,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </View>
       )}
 
-      {!isLoading && !hasError && !isBunnyVideo && (
+      {!isLoading && !hasError && !isBunnyEmbedUrl && (
         <TouchableOpacity style={styles.playButton} onPress={handlePlayPause}>
           <Text style={styles.playButtonText}>
             {status && status.isLoaded && status.isPlaying
@@ -131,23 +103,18 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       {hasError && (
         <View style={styles.errorOverlay}>
           <Text style={styles.errorText}>
-            Video unavailable in-app right now.
+            Unable to load video. Please try again later.
           </Text>
-          <Text style={styles.errorHint}>
-            Bunny might still be processing this video. Retry in 30-90s.
-          </Text>
-          <TouchableOpacity onPress={() => setRetryCount((count) => count + 1)}>
-            <Text style={styles.openLink}>Retry video</Text>
+          <TouchableOpacity onPress={() => setHasError(false)}>
+            <Text style={styles.retryText}>Retry</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() =>
-              Linking.openURL(bunnyIframeUrl || normalizedVideoUrl)
-            }
-          >
-            <Text style={[styles.openLink, { marginTop: 8 }]}>
-              Open in browser
-            </Text>
-          </TouchableOpacity>
+          {videoUrl && (
+            <TouchableOpacity onPress={() => Linking.openURL(videoUrl)}>
+              <Text style={[styles.retryText, { marginTop: 8 }]}>
+                Open in browser
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
     </View>
@@ -195,23 +162,19 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.75)",
+    backgroundColor: "rgba(0, 0, 0, 0.85)",
     paddingHorizontal: 16,
   },
   errorText: {
     color: "#fff",
-    marginBottom: 8,
+    marginBottom: 16,
     textAlign: "center",
+    fontSize: 14,
   },
-  errorHint: {
-    color: "rgba(255,255,255,0.8)",
-    marginBottom: 10,
-    textAlign: "center",
-    fontSize: 12,
-  },
-  openLink: {
+  retryText: {
     color: "#7CB2FF",
     fontWeight: "700",
+    textAlign: "center",
   },
 });
 

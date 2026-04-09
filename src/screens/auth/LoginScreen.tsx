@@ -71,9 +71,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
         <View style={styles.headerContainer}>
           <View style={styles.logoFrame}>
             <Image
-              source={require("../../../assets/2.png")}
+              source={require("../../../assets/icon.png")}
               style={styles.logo}
-              resizeMode="cover"
+              resizeMode="contain"
             />
           </View>
         </View>
@@ -175,15 +175,14 @@ const styles = StyleSheet.create({
   logoFrame: {
     width: 220,
     height: 220,
-    borderRadius: 36,
+    borderRadius: 32,
     overflow: "hidden",
     alignItems: "center",
     justifyContent: "center",
   },
   logo: {
-    width: "100%",
-    height: "100%",
-    transform: [{ scale: 2.05 }],
+    width: "88%",
+    height: "88%",
   },
   title: {
     ...typography.heading1,

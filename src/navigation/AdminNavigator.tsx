@@ -12,7 +12,10 @@ const AdminNavigator = () => {
       <Stack.Screen
         name="SubscriptionManagement"
         component={SubscriptionManagementScreen}
-        options={{ headerShown: true, title: "Subscription" }}
+        options={{
+          headerShown: false,
+          headerBackTitleVisible: false,
+        }}
       />
     </Stack.Navigator>
   );

@@ -1,6 +1,6 @@
 import React from "react";
-import { Text, View } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import Ionicons from "@expo/vector-icons/Ionicons";
 
 // Admin Screens
 import AdminDashboardScreen from "../screens/admin/DashboardScreen";
@@ -24,19 +24,18 @@ const AdminTabNavigator = () => {
         headerShown: false,
         tabBarActiveTintColor: "#5B7FFF",
         tabBarInactiveTintColor: "#6E7681",
+        tabBarShowLabel: false,
         tabBarStyle: {
           backgroundColor: "#1C2128",
           borderTopColor: "#30363D",
           borderTopWidth: 1,
-          paddingBottom: 12,
-          paddingTop: 12,
-          height: 70,
+          paddingBottom: 6,
+          paddingTop: 6,
+          height: 62,
         },
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: "700",
-          marginTop: 6,
-          letterSpacing: 0.3,
+        tabBarItemStyle: {
+          justifyContent: "center",
+          alignItems: "center",
         },
         tabBarIconStyle: {
           marginBottom: 0,
@@ -47,9 +46,8 @@ const AdminTabNavigator = () => {
         name="Dashboard"
         component={AdminDashboardScreen}
         options={{
-          tabBarLabel: "Dashboard",
           tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 26, color }}>📊</Text>
+            <Ionicons name="stats-chart" size={24} color={color} />
           ),
         }}
       />
@@ -57,9 +55,8 @@ const AdminTabNavigator = () => {
         name="Clients"
         component={ManageClientsScreen}
         options={{
-          tabBarLabel: "Clients",
           tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 26, color }}>👥</Text>
+            <Ionicons name="people" size={24} color={color} />
           ),
         }}
       />
@@ -67,9 +64,8 @@ const AdminTabNavigator = () => {
         name="Workouts"
         component={ManageWorkoutsScreen}
         options={{
-          tabBarLabel: "Workouts",
           tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 26, color }}>💪</Text>
+            <Ionicons name="fitness" size={24} color={color} />
           ),
         }}
       />
@@ -77,9 +73,8 @@ const AdminTabNavigator = () => {
         name="Diets"
         component={ManageDietsScreen}
         options={{
-          tabBarLabel: "Diets",
           tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 26, color }}>🥗</Text>
+            <Ionicons name="restaurant" size={24} color={color} />
           ),
         }}
       />

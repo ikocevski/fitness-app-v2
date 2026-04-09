@@ -12,11 +12,11 @@ import {
   Image,
   FlatList,
   SafeAreaView,
-  Switch,
 } from "react-native";
+import Slider from "@react-native-community/slider";
+import { useNavigation } from "@react-navigation/native";
 import { useAuth } from "../../context/AuthContext";
 import { supabase } from "../../config/supabase";
-import * as ImagePicker from "expo-image-picker";
 import * as FileSystem from "expo-file-system";
 import * as DocumentPicker from "expo-document-picker";
 import Papa from "papaparse";
@@ -61,20 +61,66 @@ interface DietPlanMeal {
   meal?: Meal;
 }
 
-interface MealSwap {
-  id: string;
-  original_meal_id: string;
-  alternative_meal_id: string;
-}
-
 interface Client {
   id: string;
   name: string;
   email: string;
 }
 
+const MEAL_CATEGORIES = [
+  { key: "breakfast", label: "Breakfast" },
+  { key: "lunch", label: "Lunch" },
+  { key: "dinner", label: "Dinner" },
+  { key: "pre-workout", label: "Pre-Workout" },
+  { key: "snack", label: "Snack" },
+];
+
+const formatMealCategory = (value?: string | null) => {
+  if (!value) return "Uncategorized";
+  const found = MEAL_CATEGORIES.find((category) => category.key === value);
+  if (found) return found.label;
+  return value
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+};
+
+const normalizeMealCategory = (value?: string | null) => {
+  const normalized = String(value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-");
+  return MEAL_CATEGORIES.some((category) => category.key === normalized)
+    ? normalized
+    : "snack";
+};
+
 const ManageDietsScreen = () => {
   const { user } = useAuth();
+  const navigation = useNavigation();
+
+  // Permission check
+  React.useEffect(() => {
+    if (user && user.role !== "admin") {
+      console.warn(
+        "[ManageDietsScreen] Unauthorized access attempt. User role:",
+        user.role,
+      );
+      Alert.alert(
+        "Unauthorized",
+        "You don't have permission to access this page.",
+        [
+          {
+            text: "Go Back",
+            onPress: () => {
+              navigation.goBack();
+            },
+          },
+        ],
+      );
+    }
+  }, [user?.role, navigation]);
+
   const [meals, setMeals] = useState<Meal[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(false);
@@ -82,6 +128,10 @@ const ManageDietsScreen = () => {
   const [showClientSelector, setShowClientSelector] = useState(false);
   const [editingMeal, setEditingMeal] = useState<Meal | null>(null);
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [assignedClientIdsForMeal, setAssignedClientIdsForMeal] = useState<
+    string[]
+  >([]);
+  const [selectedClientIds, setSelectedClientIds] = useState<string[]>([]);
   const [formData, setFormData] = useState({
     name: "",
     description: "",
@@ -92,7 +142,6 @@ const ManageDietsScreen = () => {
     ingredients: "",
     meal_type: "",
   });
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
   const [viewMode, setViewMode] = useState<"meals" | "plans">("meals");
   const [plans, setPlans] = useState<DietPlan[]>([]);
@@ -107,30 +156,22 @@ const ManageDietsScreen = () => {
   );
   const [planForm, setPlanForm] = useState({
     name: "",
-    meal_type: "",
     calories: "",
     protein: "",
     carbs: "",
     fats: "",
     description: "",
   });
-  const [planMealForm, setPlanMealForm] = useState({
-    mealId: "",
-    meal_type: "",
-    display_order: "",
-    is_required: true,
-  });
-  const [showSwapModal, setShowSwapModal] = useState(false);
-  const [swapMeal, setSwapMeal] = useState<Meal | null>(null);
-  const [mealSwaps, setMealSwaps] = useState<Meal[]>([]);
+  const [selectedPlanMealIds, setSelectedPlanMealIds] = useState<string[]>([]);
 
   useEffect(() => {
+    if (!user?.id) return;
     fetchMeals();
     fetchClients();
     fetchPlans();
-  }, []);
+  }, [user?.id]);
 
-  const fetchClients = async () => {
+  const fetchClients = async (): Promise<Client[]> => {
     try {
       const scoped = await supabase
         .from("coach_clients")
@@ -152,6 +193,7 @@ const ManageDietsScreen = () => {
         name: item.name || "Client",
       }));
       setClients(mappedClients);
+      return mappedClients;
     } catch (error) {
       console.error("Error fetching clients:", error);
       Alert.alert(
@@ -159,12 +201,13 @@ const ManageDietsScreen = () => {
         "Could not load clients. Check coach-client links or RLS policies.",
       );
       setClients([]);
+      return [];
     }
   };
 
   const openClientSelector = async () => {
-    await fetchClients();
-    if ((clients || []).length === 0) {
+    const availableClients = await fetchClients();
+    if (availableClients.length === 0) {
       Alert.alert(
         "No clients available",
         "Link clients to this coach first, or check RLS policies.",
@@ -173,9 +216,36 @@ const ManageDietsScreen = () => {
     setShowClientSelector(true);
   };
 
-  const openPlanClientSelector = async () => {
-    await fetchClients();
-    if ((clients || []).length === 0) {
+  const openMealAssignSelector = async (meal: Meal) => {
+    const availableClients = await fetchClients();
+    setEditingMeal(meal);
+
+    const assignedIds = extractAssignedClientIds(meal);
+
+    const assignedClient = meal.assigned_to_client_id
+      ? availableClients.find(
+          (client) => client.id === meal.assigned_to_client_id,
+        ) || null
+      : null;
+
+    setSelectedClient(assignedClient);
+    setAssignedClientIdsForMeal(assignedIds);
+    setShowClientSelector(true);
+  };
+
+  const openPlanClientSelector = async (plan?: DietPlan) => {
+    const availableClients = await fetchClients();
+
+    const targetPlan = plan || selectedPlan;
+    if (targetPlan) {
+      setSelectedPlan(targetPlan);
+      const assigned = availableClients.find(
+        (c) => c.id === targetPlan.user_id,
+      );
+      setSelectedPlanClient(assigned || null);
+    }
+
+    if ((availableClients || []).length === 0) {
       Alert.alert(
         "No clients available",
         "Link clients to this coach first, or check RLS policies.",
@@ -184,7 +254,7 @@ const ManageDietsScreen = () => {
     setShowPlanAssignModal(true);
   };
 
-  const fetchMeals = async () => {
+  const fetchMeals = async (): Promise<Meal[]> => {
     try {
       setLoading(true);
       const { data, error } = await supabase
@@ -194,14 +264,43 @@ const ManageDietsScreen = () => {
         .order("created_at", { ascending: false });
 
       if (error) throw error;
-      setMeals(data || []);
+      const nextMeals = (data || []) as Meal[];
+      setMeals(nextMeals);
+      return nextMeals;
     } catch (error) {
       console.error("Error fetching meals:", error);
       Alert.alert("Error", "Failed to load meals");
+      return [];
     } finally {
       setLoading(false);
     }
   };
+
+  const buildMealSignature = (item: Meal) =>
+    [
+      item.name || "",
+      item.description || "",
+      item.calories || 0,
+      item.protein || 0,
+      item.carbs || 0,
+      item.fats || 0,
+      item.ingredients || "",
+      item.meal_type || "",
+    ].join("|");
+
+  const getMealGroup = (meal: Meal, sourceMeals: Meal[] = meals) => {
+    const signature = buildMealSignature(meal);
+    return sourceMeals.filter((item) => buildMealSignature(item) === signature);
+  };
+
+  const extractAssignedClientIds = (meal: Meal, sourceMeals: Meal[] = meals) =>
+    Array.from(
+      new Set(
+        getMealGroup(meal, sourceMeals)
+          .map((item) => item.assigned_to_client_id)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
 
   const fetchPlans = async () => {
     if (!user?.id) return;
@@ -228,7 +327,6 @@ const ManageDietsScreen = () => {
     setSelectedPlanClient(null);
     setPlanForm({
       name: "",
-      meal_type: "",
       calories: "",
       protein: "",
       carbs: "",
@@ -244,7 +342,6 @@ const ManageDietsScreen = () => {
     setSelectedPlanClient(assigned);
     setPlanForm({
       name: plan.name,
-      meal_type: plan.meal_type,
       calories: plan.calories.toString(),
       protein: plan.protein?.toString() || "",
       carbs: plan.carbs?.toString() || "",
@@ -256,8 +353,8 @@ const ManageDietsScreen = () => {
 
   const savePlan = async () => {
     if (!user?.id) return;
-    if (!planForm.name || !planForm.meal_type || !planForm.calories) {
-      Alert.alert("Error", "Please fill in name, meal type, and calories");
+    if (!planForm.name || !planForm.calories) {
+      Alert.alert("Error", "Please fill in name and calories");
       return;
     }
     if (!selectedPlanClient) {
@@ -271,7 +368,7 @@ const ManageDietsScreen = () => {
       setLoading(true);
       const payload = {
         name: planForm.name,
-        meal_type: planForm.meal_type,
+        meal_type: "standard",
         calories: parseInt(planForm.calories),
         protein: planForm.protein ? parseFloat(planForm.protein) : null,
         carbs: planForm.carbs ? parseFloat(planForm.carbs) : null,
@@ -414,58 +511,88 @@ const ManageDietsScreen = () => {
 
   const addMealToPlan = async () => {
     if (!selectedPlan) return;
-    if (!planMealForm.mealId || !planMealForm.meal_type) {
-      Alert.alert("Error", "Select a meal and meal type");
+    if (selectedPlanMealIds.length === 0) {
+      Alert.alert("Error", "Select at least one meal");
       return;
     }
 
     try {
       setLoading(true);
-      const mealType = planMealForm.meal_type.trim();
-      const currentOrders = planMeals
-        .filter((pm) => pm.meal_type === mealType)
-        .map((pm) => pm.display_order);
-      const maxOrder = currentOrders.length ? Math.max(...currentOrders) : -1;
-      const rawOrder = planMealForm.display_order
-        ? parseInt(planMealForm.display_order)
-        : NaN;
-      let desiredOrder = Number.isNaN(rawOrder) ? maxOrder + 1 : rawOrder;
 
-      if (currentOrders.includes(desiredOrder)) {
-        desiredOrder = maxOrder + 1;
+      const selectedMeals = meals.filter((meal) =>
+        selectedPlanMealIds.includes(meal.id),
+      );
+
+      const existingMealIds = new Set(planMeals.map((pm) => pm.diet_meal_id));
+      const mealsToInsert = selectedMeals.filter(
+        (meal) => !existingMealIds.has(meal.id),
+      );
+
+      if (mealsToInsert.length === 0) {
         Alert.alert(
-          "Order adjusted",
-          `Order already used for ${mealType}. Using next order: ${desiredOrder}.`,
+          "No new meals",
+          "All selected meals are already in this plan.",
         );
+        return;
       }
 
-      const payload = {
-        diet_plan_id: selectedPlan.id,
-        diet_meal_id: planMealForm.mealId,
-        meal_type: mealType,
-        display_order: desiredOrder,
-        is_required: planMealForm.is_required,
-      };
-      const { error } = await supabase
-        .from("diet_plan_meals")
-        .insert([payload]);
+      const nextOrderByType = new Map<string, number>();
+      const occupiedOrdersByType = new Map<string, Set<number>>();
+
+      MEAL_CATEGORIES.forEach((category) => {
+        const typeOrders = planMeals
+          .filter((pm) => normalizeMealCategory(pm.meal_type) === category.key)
+          .map((pm) => pm.display_order)
+          .filter((value) => Number.isFinite(value));
+
+        occupiedOrdersByType.set(category.key, new Set(typeOrders));
+        const maxOrder = typeOrders.length ? Math.max(...typeOrders) : -1;
+        nextOrderByType.set(category.key, maxOrder + 1);
+      });
+
+      const payload = mealsToInsert.map((meal) => {
+        const mealType = normalizeMealCategory(meal.meal_type);
+        const occupied =
+          occupiedOrdersByType.get(mealType) || new Set<number>();
+        let order = nextOrderByType.get(mealType) ?? 0;
+
+        while (occupied.has(order)) {
+          order += 1;
+        }
+
+        occupied.add(order);
+        occupiedOrdersByType.set(mealType, occupied);
+        nextOrderByType.set(mealType, order + 1);
+
+        return {
+          diet_plan_id: selectedPlan.id,
+          diet_meal_id: meal.id,
+          meal_type: mealType,
+          display_order: order,
+          is_required: true,
+        };
+      });
+
+      const { error } = await supabase.from("diet_plan_meals").insert(payload);
       if (error) throw error;
       setShowAddMealToPlanModal(false);
-      setPlanMealForm({
-        mealId: "",
-        meal_type: "",
-        display_order: "",
-        is_required: true,
-      });
+      setSelectedPlanMealIds([]);
       await fetchPlanMeals(selectedPlan.id);
+      const skippedCount = selectedMeals.length - mealsToInsert.length;
+      if (skippedCount > 0) {
+        Alert.alert(
+          "Meals added",
+          `${mealsToInsert.length} added. ${skippedCount} were already in this plan.`,
+        );
+      }
       // Reopen parent modal after successful add
       setTimeout(() => setShowPlanMealsModal(true), 100);
     } catch (error: any) {
       console.error("Error adding meal to plan", error);
       if (error?.code === "23505") {
         Alert.alert(
-          "Duplicate order",
-          "That order is already used for this meal type. Please try another order.",
+          "Duplicate meal",
+          "One or more selected meals are already linked to this plan.",
         );
       } else {
         Alert.alert("Error", error.message || "Failed to add meal to plan");
@@ -488,67 +615,6 @@ const ManageDietsScreen = () => {
       Alert.alert("Error", "Failed to remove meal from plan");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const openSwapManager = async (meal: Meal) => {
-    setSwapMeal(meal);
-    await fetchMealSwaps(meal.id);
-    setShowSwapModal(true);
-  };
-
-  const fetchMealSwaps = async (mealId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from("meal_swaps")
-        .select("alternative_meal_id")
-        .eq("original_meal_id", mealId);
-      if (error) throw error;
-      const altIds = (data || []).map((r: any) => r.alternative_meal_id);
-      if (!altIds.length) {
-        setMealSwaps([]);
-        return;
-      }
-      const { data: altMeals, error: altError } = await supabase
-        .from("diet_meals")
-        .select("*")
-        .in("id", altIds);
-      if (altError) throw altError;
-      setMealSwaps(altMeals || []);
-    } catch (error) {
-      console.error("Error fetching meal swaps", error);
-      Alert.alert("Error", "Failed to load meal swaps");
-    }
-  };
-
-  const addMealSwap = async (alternativeMealId: string) => {
-    if (!swapMeal) return;
-    try {
-      const { error } = await supabase.from("meal_swaps").insert([
-        {
-          original_meal_id: swapMeal.id,
-          alternative_meal_id: alternativeMealId,
-        },
-      ]);
-      if (error) throw error;
-      await fetchMealSwaps(swapMeal.id);
-    } catch (error: any) {
-      Alert.alert("Error", error.message || "Failed to add swap meal");
-    }
-  };
-
-  const removeMealSwap = async (alternativeMealId: string) => {
-    if (!swapMeal) return;
-    try {
-      const { error } = await supabase
-        .from("meal_swaps")
-        .delete()
-        .eq("original_meal_id", swapMeal.id)
-        .eq("alternative_meal_id", alternativeMealId);
-      if (error) throw error;
-      await fetchMealSwaps(swapMeal.id);
-    } catch (error: any) {
-      Alert.alert("Error", error.message || "Failed to remove swap");
     }
   };
 
@@ -592,6 +658,7 @@ const ManageDietsScreen = () => {
           carbs: parseFloat(r.carbs),
           fats: parseFloat(r.fats),
           ingredients: r.ingredients ? String(r.ingredients) : null,
+          meal_type: normalizeMealCategory(r.meal_type),
           image_url: r.image_url ? String(r.image_url) : null,
           coach_id: user.id,
           assigned_to_client_id: r.assigned_to_client_id || null,
@@ -614,77 +681,10 @@ const ManageDietsScreen = () => {
     }
   };
 
-  const pickImage = async () => {
-    try {
-      // Request permissions
-      const permissionResult =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permissionResult.granted) {
-        Alert.alert("Permission needed", "Please enable photo library access");
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [4, 3],
-        quality: 0.8,
-      });
-
-      if (!result.canceled) {
-        const imageUri = result.assets[0].uri;
-        await uploadImageToSupabase(imageUri);
-      }
-    } catch (error) {
-      Alert.alert("Error", "Failed to pick image");
-    }
-  };
-
-  const uploadImageToSupabase = async (imageUri: string) => {
-    try {
-      setLoading(true);
-      const fileName = `meal_${Date.now()}.jpg`;
-      const fileData = await FileSystem.readAsStringAsync(imageUri, {
-        encoding: "base64",
-      });
-
-      const { data, error } = await supabase.storage
-        .from("meal-images")
-        .upload(fileName, decode(fileData), {
-          contentType: "image/jpeg",
-        });
-
-      if (error) throw error;
-
-      // Get the public URL
-      const { data: publicData } = supabase.storage
-        .from("meal-images")
-        .getPublicUrl(fileName);
-
-      setSelectedImage(publicData.publicUrl);
-      Alert.alert("Success", "Image uploaded successfully!");
-    } catch (error) {
-      console.error("Upload error:", error);
-      // Fallback to local URI if storage fails
-      setSelectedImage(imageUri);
-      Alert.alert("Info", "Using local image (storage not configured)");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Helper function to decode base64
-  const decode = (str: string) => {
-    const bytes = new Uint8Array(str.length);
-    for (let i = 0; i < str.length; i++) {
-      bytes[i] = str.charCodeAt(i);
-    }
-    return bytes;
-  };
-
   const openCreateModal = () => {
     setEditingMeal(null);
     setSelectedClient(null);
+    setSelectedClientIds([]);
     setFormData({
       name: "",
       description: "",
@@ -695,7 +695,6 @@ const ManageDietsScreen = () => {
       ingredients: "",
       meal_type: "",
     });
-    setSelectedImage(null);
     setShowModal(true);
   };
 
@@ -707,8 +706,10 @@ const ManageDietsScreen = () => {
         (c) => c.id === meal.assigned_to_client_id,
       );
       setSelectedClient(assignedClient || null);
+      setSelectedClientIds([meal.assigned_to_client_id]);
     } else {
       setSelectedClient(null);
+      setSelectedClientIds([]);
     }
     setFormData({
       name: meal.name,
@@ -720,7 +721,6 @@ const ManageDietsScreen = () => {
       ingredients: meal.ingredients,
       meal_type: meal.meal_type || "",
     });
-    setSelectedImage(meal.image_url || null);
     setShowModal(true);
   };
 
@@ -730,16 +730,20 @@ const ManageDietsScreen = () => {
       !formData.calories ||
       !formData.protein ||
       !formData.carbs ||
-      !formData.fats
+      !formData.fats ||
+      !formData.meal_type
     ) {
-      Alert.alert("Error", "Please fill in all required fields");
+      Alert.alert(
+        "Error",
+        "Please fill in all required fields and select a meal category",
+      );
       return;
     }
 
     try {
       setLoading(true);
 
-      const mealData = {
+      const baseMealData = {
         name: formData.name,
         description: formData.description,
         calories: parseInt(formData.calories),
@@ -747,31 +751,65 @@ const ManageDietsScreen = () => {
         carbs: parseFloat(formData.carbs),
         fats: parseFloat(formData.fats),
         ingredients: formData.ingredients,
-        meal_type: formData.meal_type || null,
-        image_url: selectedImage,
+        meal_type: formData.meal_type,
         coach_id: user?.id,
-        assigned_to_client_id: selectedClient?.id || null,
       };
 
-      console.log("[saveMeal] Saving meal with data:", mealData);
-      console.log("[saveMeal] Selected client:", selectedClient);
+      console.log("[saveMeal] Saving meal with data:", baseMealData);
+      console.log("[saveMeal] Selected clients:", selectedClientIds);
 
       if (editingMeal) {
+        const primaryClientId = selectedClientIds[0] || null;
         const { error } = await supabase
           .from("diet_meals")
-          .update(mealData)
+          .update({
+            ...baseMealData,
+            assigned_to_client_id: primaryClientId,
+          })
           .eq("id", editingMeal.id);
 
         if (error) throw error;
-        Alert.alert("Success", "Meal updated successfully!");
+
+        if (selectedClientIds.length > 1) {
+          const clonePayload = selectedClientIds.slice(1).map((clientId) => ({
+            ...baseMealData,
+            assigned_to_client_id: clientId,
+          }));
+
+          const { error: cloneError } = await supabase
+            .from("diet_meals")
+            .insert(clonePayload);
+
+          if (cloneError) throw cloneError;
+          Alert.alert(
+            "Success",
+            `Meal updated and assigned to ${selectedClientIds.length} clients!`,
+          );
+        } else {
+          Alert.alert("Success", "Meal updated successfully!");
+        }
       } else {
-        const { error } = await supabase.from("diet_meals").insert([mealData]);
+        const payload =
+          selectedClientIds.length > 0
+            ? selectedClientIds.map((clientId) => ({
+                ...baseMealData,
+                assigned_to_client_id: clientId,
+              }))
+            : [{ ...baseMealData, assigned_to_client_id: null }];
+
+        const { error } = await supabase.from("diet_meals").insert(payload);
 
         if (error) throw error;
-        Alert.alert("Success", "Meal created successfully!");
+        Alert.alert(
+          "Success",
+          selectedClientIds.length > 1
+            ? `Meal created and assigned to ${selectedClientIds.length} clients!`
+            : "Meal created successfully!",
+        );
       }
 
       setShowModal(false);
+      setSelectedClientIds([]);
       fetchMeals();
     } catch (error: any) {
       console.error("Error saving meal:", error);
@@ -805,27 +843,120 @@ const ManageDietsScreen = () => {
     ]);
   };
 
-  const assignMealToClient = async (
-    mealId: string,
-    clientId: string | null,
+  const toggleClientAssignmentForMeal = async (
+    meal: Meal,
+    clientId: string,
   ) => {
+    if (!user?.id) return;
+
     try {
       setLoading(true);
-      const { error } = await supabase
-        .from("diet_meals")
-        .update({ assigned_to_client_id: clientId })
-        .eq("id", mealId);
 
-      if (error) throw error;
-      Alert.alert(
-        "Success",
-        clientId
-          ? "Meal assigned to client!"
-          : "Meal marked as unassigned for all clients",
+      const group = getMealGroup(meal);
+      const currentlyAssigned = group.filter(
+        (item) => item.assigned_to_client_id === clientId,
       );
-      fetchMeals();
+
+      if (currentlyAssigned.length > 0) {
+        const unassignedExists = group.some(
+          (item) => !item.assigned_to_client_id,
+        );
+
+        if (unassignedExists) {
+          const idsToDelete = currentlyAssigned.map((item) => item.id);
+          const { error } = await supabase
+            .from("diet_meals")
+            .delete()
+            .in("id", idsToDelete);
+          if (error) throw error;
+        } else {
+          const targetId = currentlyAssigned[0].id;
+          const { error } = await supabase
+            .from("diet_meals")
+            .update({ assigned_to_client_id: null })
+            .eq("id", targetId);
+          if (error) throw error;
+
+          if (currentlyAssigned.length > 1) {
+            const duplicateIds = currentlyAssigned
+              .slice(1)
+              .map((item) => item.id);
+            if (duplicateIds.length > 0) {
+              const { error: duplicateDeleteError } = await supabase
+                .from("diet_meals")
+                .delete()
+                .in("id", duplicateIds);
+              if (duplicateDeleteError) throw duplicateDeleteError;
+            }
+          }
+        }
+      } else {
+        const sourceMeal =
+          group.find((item) => !item.assigned_to_client_id) || group[0] || meal;
+
+        const payload = {
+          name: sourceMeal.name,
+          description: sourceMeal.description,
+          calories: sourceMeal.calories,
+          protein: sourceMeal.protein,
+          carbs: sourceMeal.carbs,
+          fats: sourceMeal.fats,
+          ingredients: sourceMeal.ingredients,
+          meal_type: sourceMeal.meal_type,
+          image_url: sourceMeal.image_url || null,
+          coach_id: user.id,
+          assigned_to_client_id: clientId,
+        };
+
+        const { error } = await supabase.from("diet_meals").insert([payload]);
+        if (error) throw error;
+      }
+
+      const refreshedMeals = await fetchMeals();
+      setAssignedClientIdsForMeal(
+        extractAssignedClientIds(meal, refreshedMeals),
+      );
     } catch (error: any) {
-      Alert.alert("Error", error.message || "Failed to assign meal");
+      console.error("Error toggling meal assignment:", error);
+      Alert.alert("Error", error.message || "Failed to update assignment");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const unassignMealFromAllClients = async (meal: Meal) => {
+    if (!user?.id) return;
+
+    try {
+      setLoading(true);
+      const group = getMealGroup(meal);
+      if (group.length === 0) return;
+
+      const keeper = group[0];
+      const otherIds = group.slice(1).map((item) => item.id);
+
+      const { error: keeperError } = await supabase
+        .from("diet_meals")
+        .update({ assigned_to_client_id: null })
+        .eq("id", keeper.id);
+      if (keeperError) throw keeperError;
+
+      if (otherIds.length > 0) {
+        const { error: deleteError } = await supabase
+          .from("diet_meals")
+          .delete()
+          .in("id", otherIds);
+        if (deleteError) throw deleteError;
+      }
+
+      const refreshedMeals = await fetchMeals();
+      setAssignedClientIdsForMeal(
+        extractAssignedClientIds(meal, refreshedMeals),
+      );
+      setSelectedClient(null);
+      Alert.alert("Success", "Meal unassigned from all clients");
+    } catch (error: any) {
+      Alert.alert("Error", error.message || "Failed to clear assignments");
     } finally {
       setLoading(false);
     }
@@ -833,88 +964,116 @@ const ManageDietsScreen = () => {
 
   const renderMealCard = (meal: Meal) => (
     <View key={meal.id} style={styles.mealCard}>
-      <View style={styles.mealHeader}>
-        <View style={styles.mealInfo}>
-          <Text style={styles.mealName}>{meal.name}</Text>
-          <Text style={styles.mealDescription} numberOfLines={2}>
-            {meal.description}
-          </Text>
-          {!meal.assigned_to_client_id ? (
-            <Text
-              style={[
-                styles.mealDescription,
-                { color: "#FF9500", marginTop: 4 },
-              ]}
-            >
-              ⚠️ Not assigned
-            </Text>
-          ) : null}
-        </View>
-        {meal.image_url && (
-          <Image source={{ uri: meal.image_url }} style={styles.mealImage} />
-        )}
-      </View>
+      {(() => {
+        const assignedClientIds = extractAssignedClientIds(meal);
+        const assignedCount = assignedClientIds.length;
+        return (
+          <>
+            <View style={styles.mealHeader}>
+              <View style={styles.mealInfo}>
+                <Text style={styles.mealName}>{meal.name}</Text>
+                <Text style={styles.mealDescription} numberOfLines={2}>
+                  {meal.description}
+                </Text>
+                <View style={styles.mealCategoryBadge}>
+                  <Text style={styles.mealCategoryBadgeText}>
+                    {formatMealCategory(meal.meal_type)}
+                  </Text>
+                </View>
+                {assignedCount === 0 ? (
+                  <Text
+                    style={[
+                      styles.mealDescription,
+                      { color: "#FF9500", marginTop: 4 },
+                    ]}
+                  >
+                    ⚠️ Not assigned
+                  </Text>
+                ) : (
+                  <Text
+                    style={[
+                      styles.mealDescription,
+                      { color: "#7EE787", marginTop: 4 },
+                    ]}
+                  >
+                    ✓ Assigned to {assignedCount} client
+                    {assignedCount > 1 ? "s" : ""}
+                  </Text>
+                )}
+              </View>
+              {meal.image_url && (
+                <Image
+                  source={{ uri: meal.image_url }}
+                  style={styles.mealImage}
+                />
+              )}
+            </View>
 
-      <View style={styles.macrosContainer}>
-        <View style={styles.macroBox}>
-          <Text style={styles.macroLabel}>Calories</Text>
-          <Text style={styles.macroValue}>{meal.calories}</Text>
-          <Text style={styles.macroUnit}>kcal</Text>
-        </View>
-        <View style={styles.macroBox}>
-          <Text style={styles.macroLabel}>Protein</Text>
-          <Text style={styles.macroValue}>{meal.protein}g</Text>
-        </View>
-        <View style={styles.macroBox}>
-          <Text style={styles.macroLabel}>Carbs</Text>
-          <Text style={styles.macroValue}>{meal.carbs}g</Text>
-        </View>
-        <View style={styles.macroBox}>
-          <Text style={styles.macroLabel}>Fats</Text>
-          <Text style={styles.macroValue}>{meal.fats}g</Text>
-        </View>
-      </View>
+            <View style={styles.macrosContainer}>
+              <View style={styles.macroBox}>
+                <Text style={styles.macroLabel}>Calories</Text>
+                <Text style={styles.macroValue}>{meal.calories}</Text>
+                <Text style={styles.macroUnit}>kcal</Text>
+              </View>
+              <View style={styles.macroBox}>
+                <Text style={styles.macroLabel}>Protein</Text>
+                <Text style={styles.macroValue}>{meal.protein}g</Text>
+              </View>
+              <View style={styles.macroBox}>
+                <Text style={styles.macroLabel}>Carbs</Text>
+                <Text style={styles.macroValue}>{meal.carbs}g</Text>
+              </View>
+              <View style={styles.macroBox}>
+                <Text style={styles.macroLabel}>Fats</Text>
+                <Text style={styles.macroValue}>{meal.fats}g</Text>
+              </View>
+            </View>
 
-      {meal.ingredients && (
-        <View style={styles.ingredientsSection}>
-          <Text style={styles.ingredientsTitle}>Ingredients:</Text>
-          <Text style={styles.ingredientsText}>{meal.ingredients}</Text>
-        </View>
-      )}
+            {meal.ingredients && (
+              <View style={styles.ingredientsSection}>
+                <Text style={styles.ingredientsTitle}>Ingredients:</Text>
+                <Text style={styles.ingredientsText}>{meal.ingredients}</Text>
+              </View>
+            )}
 
-      <View style={styles.actionButtons}>
-        <TouchableOpacity
-          style={[styles.actionBtn, styles.editBtn]}
-          onPress={() => openEditModal(meal)}
-        >
-          <Text style={styles.actionBtnText}>✏️ Edit</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.actionBtn, styles.assignBtn]}
-          onPress={() => {
-            setEditingMeal(meal);
-            setShowClientSelector(true);
-          }}
-        >
-          <Text style={styles.actionBtnText}>
-            {meal.assigned_to_client_id ? "✓ Assigned" : "➕ Assign"}
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.actionBtn, styles.swapBtn]}
-          onPress={() => openSwapManager(meal)}
-        >
-          <Text style={styles.actionBtnText}>🔁 Swaps</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.actionBtn, styles.deleteBtn]}
-          onPress={() => deleteMeal(meal.id)}
-        >
-          <Text style={styles.actionBtnText}>🗑️ Delete</Text>
-        </TouchableOpacity>
-      </View>
+            <View style={styles.actionButtons}>
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.editBtn]}
+                onPress={() => openEditModal(meal)}
+              >
+                <Text style={styles.actionBtnText}>✏️ Edit</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.assignBtn]}
+                onPress={() => openMealAssignSelector(meal)}
+              >
+                <Text style={styles.actionBtnText}>
+                  {assignedCount > 0
+                    ? `✓ Assigned (${assignedCount})`
+                    : "➕ Assign"}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.deleteBtn]}
+                onPress={() => deleteMeal(meal.id)}
+              >
+                <Text style={styles.actionBtnText}>🗑️ Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        );
+      })()}
     </View>
   );
+
+  const uniqueMeals = meals.filter((meal, index, allMeals) => {
+    const signature = buildMealSignature(meal);
+    return (
+      allMeals.findIndex(
+        (candidate) => buildMealSignature(candidate) === signature,
+      ) === index
+    );
+  });
 
   const renderPlanCard = (plan: DietPlan) => {
     const client = clients.find((c) => c.id === plan.user_id);
@@ -923,9 +1082,7 @@ const ManageDietsScreen = () => {
         <View style={styles.planHeader}>
           <View style={styles.planInfo}>
             <Text style={styles.planName}>{plan.name}</Text>
-            <Text style={styles.planMeta}>
-              {plan.meal_type} • {plan.calories} kcal
-            </Text>
+            <Text style={styles.planMeta}>{plan.calories} kcal target</Text>
             <Text style={styles.planMeta}>👤 {client?.name || "Client"}</Text>
           </View>
         </View>
@@ -960,10 +1117,7 @@ const ManageDietsScreen = () => {
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.actionBtn, styles.assignBtn]}
-            onPress={() => {
-              setSelectedPlan(plan);
-              setShowPlanAssignModal(true);
-            }}
+            onPress={() => openPlanClientSelector(plan)}
           >
             <Text style={styles.actionBtnText}>👤 Assign</Text>
           </TouchableOpacity>
@@ -988,7 +1142,7 @@ const ManageDietsScreen = () => {
     <SafeAreaView style={styles.container}>
       <ScrollView>
         <View style={styles.header}>
-          <Text style={styles.title}>🥗 Manage Diets</Text>
+          <Text style={styles.title}>Manage Diets</Text>
           <Text style={styles.subtitle}>
             Build a meal library and assign plans to clients
           </Text>
@@ -1044,13 +1198,13 @@ const ManageDietsScreen = () => {
                   onPress={importMealsFromCsv}
                 >
                   <Text style={styles.createButtonIcon}>⬆️</Text>
-                  <Text style={styles.createButtonText}>Import CSV</Text>
+                  <Text style={styles.createButtonText}>Import Meals</Text>
                 </TouchableOpacity>
               </View>
 
-              {loading && meals.length === 0 ? (
+              {loading && uniqueMeals.length === 0 ? (
                 <ActivityIndicator size="large" color="#FF6B35" />
-              ) : meals.length === 0 ? (
+              ) : uniqueMeals.length === 0 ? (
                 <View style={styles.emptyState}>
                   <Text style={styles.emptyStateIcon}>📭</Text>
                   <Text style={styles.emptyStateText}>
@@ -1063,9 +1217,9 @@ const ManageDietsScreen = () => {
               ) : (
                 <View>
                   <Text style={styles.sectionTitle}>
-                    Your Meals ({meals.length})
+                    Your Meals ({uniqueMeals.length})
                   </Text>
-                  {meals.map((meal) => renderMealCard(meal))}
+                  {uniqueMeals.map((meal) => renderMealCard(meal))}
                 </View>
               )}
             </>
@@ -1144,29 +1298,6 @@ const ManageDietsScreen = () => {
                   />
                 </View>
 
-                {/* Image Upload */}
-                <View style={styles.formGroup}>
-                  <Text style={styles.label}>Meal Image</Text>
-                  <TouchableOpacity
-                    style={styles.imageButton}
-                    onPress={pickImage}
-                  >
-                    {selectedImage ? (
-                      <Image
-                        source={{ uri: selectedImage }}
-                        style={styles.previewImage}
-                      />
-                    ) : (
-                      <>
-                        <Text style={styles.imageButtonIcon}>📸</Text>
-                        <Text style={styles.imageButtonText}>
-                          Pick or take a photo
-                        </Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                </View>
-
                 {/* Macros */}
                 <View style={styles.formGroup}>
                   <Text style={styles.label}>Macronutrients</Text>
@@ -1237,9 +1368,38 @@ const ManageDietsScreen = () => {
                   />
                 </View>
 
+                <View style={styles.formGroup}>
+                  <Text style={styles.label}>Meal Category *</Text>
+                  <View style={styles.categoryOptionsWrap}>
+                    {MEAL_CATEGORIES.map((category) => (
+                      <TouchableOpacity
+                        key={category.key}
+                        style={[
+                          styles.categoryOptionChip,
+                          formData.meal_type === category.key &&
+                            styles.categoryOptionChipActive,
+                        ]}
+                        onPress={() =>
+                          setFormData({ ...formData, meal_type: category.key })
+                        }
+                      >
+                        <Text
+                          style={[
+                            styles.categoryOptionChipText,
+                            formData.meal_type === category.key &&
+                              styles.categoryOptionChipTextActive,
+                          ]}
+                        >
+                          {category.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+
                 {/* Assign to Client */}
                 <View style={styles.formGroup}>
-                  <Text style={styles.label}>Assign to Client (optional)</Text>
+                  <Text style={styles.label}>Assign to Clients (optional)</Text>
                   {clients.length === 0 ? (
                     <Text style={styles.emptyStateSubtext}>
                       No clients available. Meal will be unassigned.
@@ -1251,24 +1411,36 @@ const ManageDietsScreen = () => {
                           key={client.id}
                           style={[
                             styles.selectOption,
-                            selectedClient?.id === client.id &&
+                            selectedClientIds.includes(client.id) &&
                               styles.selectOptionActive,
                           ]}
-                          onPress={() => setSelectedClient(client)}
+                          onPress={() => {
+                            setSelectedClientIds((prev) =>
+                              prev.includes(client.id)
+                                ? prev.filter((id) => id !== client.id)
+                                : [...prev, client.id],
+                            );
+                          }}
                         >
-                          <Text style={styles.selectOptionText}>
-                            {selectedClient?.id === client.id ? "✓ " : ""}
+                          <Text
+                            style={[
+                              styles.selectOptionText,
+                              selectedClientIds.includes(client.id) &&
+                                styles.selectOptionTextActive,
+                            ]}
+                          >
+                            {selectedClientIds.includes(client.id) ? "✓ " : ""}
                             {client.name} ({client.email})
                           </Text>
                         </TouchableOpacity>
                       ))}
-                      {selectedClient && (
+                      {selectedClientIds.length > 0 && (
                         <TouchableOpacity
-                          onPress={() => setSelectedClient(null)}
+                          onPress={() => setSelectedClientIds([])}
                           style={styles.clearClientButton}
                         >
                           <Text style={styles.clearClientText}>
-                            ✕ Clear selection
+                            ✕ Clear selections ({selectedClientIds.length})
                           </Text>
                         </TouchableOpacity>
                       )}
@@ -1318,21 +1490,21 @@ const ManageDietsScreen = () => {
                   <TouchableOpacity
                     style={[
                       styles.clientOption,
-                      selectedClient?.id === item.id &&
+                      assignedClientIdsForMeal.includes(item.id) &&
                         styles.clientOptionSelected,
                     ]}
                     onPress={() => {
                       if (editingMeal) {
-                        assignMealToClient(editingMeal.id, item.id);
+                        toggleClientAssignmentForMeal(editingMeal, item.id);
                       } else {
                         setSelectedClient(item);
+                        setShowClientSelector(false);
                       }
-                      setShowClientSelector(false);
                     }}
                   >
                     <Text style={styles.clientOptionText}>👤 {item.name}</Text>
                     <Text style={styles.clientOptionEmail}>{item.email}</Text>
-                    {selectedClient?.id === item.id && (
+                    {assignedClientIdsForMeal.includes(item.id) && (
                       <Text style={styles.checkmark}>✓</Text>
                     )}
                   </TouchableOpacity>
@@ -1355,8 +1527,7 @@ const ManageDietsScreen = () => {
                 >
                   <TouchableOpacity
                     onPress={() => {
-                      assignMealToClient(editingMeal.id, null);
-                      setShowClientSelector(false);
+                      unassignMealFromAllClients(editingMeal);
                     }}
                     style={{
                       padding: 12,
@@ -1365,7 +1536,7 @@ const ManageDietsScreen = () => {
                     }}
                   >
                     <Text style={styles.clientOptionText}>
-                      Unassign (available to all)
+                      Unassign from all clients
                     </Text>
                   </TouchableOpacity>
                 </View>
@@ -1402,68 +1573,215 @@ const ManageDietsScreen = () => {
                 </View>
 
                 <View style={styles.formGroup}>
-                  <Text style={styles.label}>Meal Type *</Text>
+                  <Text style={styles.label}>Daily Calorie Target *</Text>
                   <TextInput
                     style={styles.input}
-                    placeholder="e.g., standard"
-                    value={planForm.meal_type}
-                    onChangeText={(text) =>
-                      setPlanForm({ ...planForm, meal_type: text })
-                    }
-                  />
-                </View>
-
-                <View style={styles.formGroup}>
-                  <Text style={styles.label}>Calories *</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="0"
+                    placeholder="e.g., 2500"
                     keyboardType="number-pad"
                     value={planForm.calories}
-                    onChangeText={(text) =>
-                      setPlanForm({ ...planForm, calories: text })
-                    }
+                    onChangeText={(text) => {
+                      setPlanForm({ ...planForm, calories: text });
+                      if (!planForm.protein) {
+                        const baseCalories = parseInt(text) || 2000;
+                        const protein = (baseCalories * 0.3) / 4;
+                        const carbs = (baseCalories * 0.4) / 4;
+                        const fats = (baseCalories * 0.3) / 9;
+                        setPlanForm((prev) => ({
+                          ...prev,
+                          protein: Math.round(protein).toString(),
+                          carbs: Math.round(carbs).toString(),
+                          fats: Math.round(fats).toString(),
+                        }));
+                      }
+                    }}
                   />
                 </View>
 
                 <View style={styles.formGroup}>
-                  <Text style={styles.label}>Macros</Text>
-                  <View style={styles.macrosGrid}>
-                    <View style={styles.macroInput}>
-                      <Text style={styles.macroLabel}>Protein (g)</Text>
-                      <TextInput
-                        style={styles.input}
-                        placeholder="0"
-                        keyboardType="decimal-pad"
-                        value={planForm.protein}
-                        onChangeText={(text) =>
-                          setPlanForm({ ...planForm, protein: text })
-                        }
-                      />
+                  <Text style={styles.label}>Adjust Macronutrients</Text>
+                  <Text style={styles.macroDescription}>
+                    Use sliders to adjust protein, carbs, and fats. They'll
+                    auto-balance to match your calorie target.
+                  </Text>
+
+                  {/* PROTEIN */}
+                  <View style={styles.macroCard}>
+                    <View style={styles.macroCardHeader}>
+                      <View>
+                        <Text style={styles.macroCardTitle}>🥩 Protein</Text>
+                        <Text style={styles.macroCardSubtitle}>
+                          Building muscle & recovery
+                        </Text>
+                      </View>
+                      <View style={styles.macroCardValue}>
+                        <Text style={styles.macroCardValueNumber}>
+                          {Math.round(parseFloat(planForm.protein) || 0)}
+                        </Text>
+                        <Text style={styles.macroCardValueUnit}>g</Text>
+                      </View>
                     </View>
-                    <View style={styles.macroInput}>
-                      <Text style={styles.macroLabel}>Carbs (g)</Text>
-                      <TextInput
-                        style={styles.input}
-                        placeholder="0"
-                        keyboardType="decimal-pad"
-                        value={planForm.carbs}
-                        onChangeText={(text) =>
-                          setPlanForm({ ...planForm, carbs: text })
-                        }
-                      />
+                    <Slider
+                      style={styles.slider}
+                      minimumValue={10}
+                      maximumValue={Math.max(
+                        300,
+                        Math.round((parseInt(planForm.calories) || 2000) / 4),
+                      )}
+                      step={1}
+                      value={parseFloat(planForm.protein) || 0}
+                      onValueChange={(val) => {
+                        setPlanForm({
+                          ...planForm,
+                          protein: Math.round(val).toString(),
+                        });
+                      }}
+                      minimumTrackTintColor="#FF6B35"
+                      maximumTrackTintColor="rgba(255,255,255,0.1)"
+                    />
+                    <View style={styles.macroStats}>
+                      <Text style={styles.macroStat}>
+                        {Math.round((parseFloat(planForm.protein) || 0) * 4)}{" "}
+                        cal
+                      </Text>
+                      <Text style={styles.macroStat}>4 cal/g</Text>
                     </View>
-                    <View style={styles.macroInput}>
-                      <Text style={styles.macroLabel}>Fats (g)</Text>
-                      <TextInput
-                        style={styles.input}
-                        placeholder="0"
-                        keyboardType="decimal-pad"
-                        value={planForm.fats}
-                        onChangeText={(text) =>
-                          setPlanForm({ ...planForm, fats: text })
-                        }
-                      />
+                  </View>
+
+                  {/* CARBS */}
+                  <View style={styles.macroCard}>
+                    <View style={styles.macroCardHeader}>
+                      <View>
+                        <Text style={styles.macroCardTitle}>🌾 Carbs</Text>
+                        <Text style={styles.macroCardSubtitle}>
+                          Energy & performance
+                        </Text>
+                      </View>
+                      <View style={styles.macroCardValue}>
+                        <Text style={styles.macroCardValueNumber}>
+                          {Math.round(parseFloat(planForm.carbs) || 0)}
+                        </Text>
+                        <Text style={styles.macroCardValueUnit}>g</Text>
+                      </View>
+                    </View>
+                    <Slider
+                      style={styles.slider}
+                      minimumValue={20}
+                      maximumValue={Math.max(
+                        400,
+                        Math.round((parseInt(planForm.calories) || 2000) / 4),
+                      )}
+                      step={1}
+                      value={parseFloat(planForm.carbs) || 0}
+                      onValueChange={(val) => {
+                        setPlanForm({
+                          ...planForm,
+                          carbs: Math.round(val).toString(),
+                        });
+                      }}
+                      minimumTrackTintColor="#FF6B35"
+                      maximumTrackTintColor="rgba(255,255,255,0.1)"
+                    />
+                    <View style={styles.macroStats}>
+                      <Text style={styles.macroStat}>
+                        {Math.round((parseFloat(planForm.carbs) || 0) * 4)} cal
+                      </Text>
+                      <Text style={styles.macroStat}>4 cal/g</Text>
+                    </View>
+                  </View>
+
+                  {/* FATS */}
+                  <View style={styles.macroCard}>
+                    <View style={styles.macroCardHeader}>
+                      <View>
+                        <Text style={styles.macroCardTitle}>🫒 Fats</Text>
+                        <Text style={styles.macroCardSubtitle}>
+                          Hormones & absorption
+                        </Text>
+                      </View>
+                      <View style={styles.macroCardValue}>
+                        <Text style={styles.macroCardValueNumber}>
+                          {Math.round(parseFloat(planForm.fats) || 0)}
+                        </Text>
+                        <Text style={styles.macroCardValueUnit}>g</Text>
+                      </View>
+                    </View>
+                    <Slider
+                      style={styles.slider}
+                      minimumValue={10}
+                      maximumValue={Math.max(
+                        150,
+                        Math.round((parseInt(planForm.calories) || 2000) / 9),
+                      )}
+                      step={1}
+                      value={parseFloat(planForm.fats) || 0}
+                      onValueChange={(val) => {
+                        setPlanForm({
+                          ...planForm,
+                          fats: Math.round(val).toString(),
+                        });
+                      }}
+                      minimumTrackTintColor="#FF6B35"
+                      maximumTrackTintColor="rgba(255,255,255,0.1)"
+                    />
+                    <View style={styles.macroStats}>
+                      <Text style={styles.macroStat}>
+                        {Math.round((parseFloat(planForm.fats) || 0) * 9)} cal
+                      </Text>
+                      <Text style={styles.macroStat}>9 cal/g</Text>
+                    </View>
+                  </View>
+
+                  {/* SUMMARY */}
+                  <View style={styles.macroSummaryContainer}>
+                    <View style={styles.macroSummaryRow}>
+                      <Text style={styles.macroSummaryLabel}>
+                        Total Calories:
+                      </Text>
+                      <Text style={styles.macroSummaryValue}>
+                        {Math.round(
+                          (parseFloat(planForm.protein) || 0) * 4 +
+                            (parseFloat(planForm.carbs) || 0) * 4 +
+                            (parseFloat(planForm.fats) || 0) * 9,
+                        )}
+                      </Text>
+                      <Text style={styles.macroSummaryTarget}>
+                        / {planForm.calories || "0"} cal
+                      </Text>
+                    </View>
+                    <View style={styles.macroSummaryBreakdown}>
+                      <View style={styles.macroBreakdownItem}>
+                        <Text style={styles.macroBreakdownLabel}>P</Text>
+                        <Text style={styles.macroBreakdownPercent}>
+                          {Math.round(
+                            (((parseFloat(planForm.protein) || 0) * 4) /
+                              Math.max(1, parseInt(planForm.calories) || 1)) *
+                              100,
+                          )}
+                          %
+                        </Text>
+                      </View>
+                      <View style={styles.macroBreakdownItem}>
+                        <Text style={styles.macroBreakdownLabel}>C</Text>
+                        <Text style={styles.macroBreakdownPercent}>
+                          {Math.round(
+                            (((parseFloat(planForm.carbs) || 0) * 4) /
+                              Math.max(1, parseInt(planForm.calories) || 1)) *
+                              100,
+                          )}
+                          %
+                        </Text>
+                      </View>
+                      <View style={styles.macroBreakdownItem}>
+                        <Text style={styles.macroBreakdownLabel}>F</Text>
+                        <Text style={styles.macroBreakdownPercent}>
+                          {Math.round(
+                            (((parseFloat(planForm.fats) || 0) * 9) /
+                              Math.max(1, parseInt(planForm.calories) || 1)) *
+                              100,
+                          )}
+                          %
+                        </Text>
+                      </View>
                     </View>
                   </View>
                 </View>
@@ -1500,7 +1818,13 @@ const ManageDietsScreen = () => {
                           ]}
                           onPress={() => setSelectedPlanClient(client)}
                         >
-                          <Text style={styles.selectOptionText}>
+                          <Text
+                            style={[
+                              styles.selectOptionText,
+                              selectedPlanClient?.id === client.id &&
+                                styles.selectOptionTextActive,
+                            ]}
+                          >
                             {selectedPlanClient?.id === client.id ? "✓ " : ""}
                             {client.name} ({client.email})
                           </Text>
@@ -1563,6 +1887,7 @@ const ManageDietsScreen = () => {
                 onPress={() => {
                   console.log("[Add Meal] Button pressed, opening modal");
                   console.log("[Add Meal] Current meals count:", meals.length);
+                  setSelectedPlanMealIds([]);
                   setShowPlanMealsModal(false); // Close parent modal first
                   setTimeout(() => setShowAddMealToPlanModal(true), 100); // Then open child modal
                 }}
@@ -1587,7 +1912,8 @@ const ManageDietsScreen = () => {
                           {pm.meal?.name || "Meal"}
                         </Text>
                         <Text style={styles.planMealMeta}>
-                          {pm.meal_type} • Order {pm.display_order}
+                          {formatMealCategory(pm.meal_type)} • Order{" "}
+                          {pm.display_order}
                         </Text>
                         <Text style={styles.planMealMeta}>
                           {pm.is_required ? "Required" : "Optional"}
@@ -1632,7 +1958,7 @@ const ManageDietsScreen = () => {
               </View>
 
               <View style={styles.formGroup}>
-                <Text style={styles.label}>Select Meal *</Text>
+                <Text style={styles.label}>Select Meals *</Text>
                 {meals.length === 0 ? (
                   <View style={styles.emptyState}>
                     <Text style={styles.emptyStateText}>
@@ -1648,62 +1974,50 @@ const ManageDietsScreen = () => {
                       key={meal.id}
                       style={[
                         styles.selectOption,
-                        planMealForm.mealId === meal.id &&
+                        selectedPlanMealIds.includes(meal.id) &&
                           styles.selectOptionActive,
                       ]}
                       onPress={() => {
-                        setPlanMealForm({
-                          ...planMealForm,
-                          mealId: meal.id,
-                          meal_type: meal.meal_type || planMealForm.meal_type,
-                        });
+                        setSelectedPlanMealIds((current) =>
+                          current.includes(meal.id)
+                            ? current.filter((id) => id !== meal.id)
+                            : [...current, meal.id],
+                        );
                       }}
                     >
-                      <Text style={styles.selectOptionText}>{meal.name}</Text>
+                      <Text
+                        style={[
+                          styles.selectOptionText,
+                          selectedPlanMealIds.includes(meal.id) &&
+                            styles.selectOptionTextActive,
+                        ]}
+                      >
+                        {selectedPlanMealIds.includes(meal.id) ? "✓ " : ""}
+                        {meal.name}
+                      </Text>
                       {meal.meal_type && (
-                        <Text style={styles.selectOptionSubtext}>
-                          {meal.meal_type}
+                        <Text
+                          style={[
+                            styles.selectOptionSubtext,
+                            selectedPlanMealIds.includes(meal.id) &&
+                              styles.selectOptionSubtextActive,
+                          ]}
+                        >
+                          {formatMealCategory(meal.meal_type)}
                         </Text>
                       )}
                     </TouchableOpacity>
                   ))
                 )}
+                <Text style={styles.clearClientText}>
+                  {selectedPlanMealIds.length} meal
+                  {selectedPlanMealIds.length === 1 ? "" : "s"} selected
+                </Text>
               </View>
 
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>Meal Type *</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="breakfast / lunch / dinner / snack"
-                  value={planMealForm.meal_type}
-                  onChangeText={(text) =>
-                    setPlanMealForm({ ...planMealForm, meal_type: text })
-                  }
-                />
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={styles.label}>Display Order</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="0"
-                  keyboardType="number-pad"
-                  value={planMealForm.display_order}
-                  onChangeText={(text) =>
-                    setPlanMealForm({ ...planMealForm, display_order: text })
-                  }
-                />
-              </View>
-
-              <View style={styles.formGroupRow}>
-                <Text style={styles.label}>Required</Text>
-                <Switch
-                  value={planMealForm.is_required}
-                  onValueChange={(value) =>
-                    setPlanMealForm({ ...planMealForm, is_required: value })
-                  }
-                />
-              </View>
+              <Text style={[styles.emptyStateSubtext, { marginBottom: 16 }]}>
+                Meal type and order are auto-filled from each meal.
+              </Text>
 
               <View style={styles.buttonGroup}>
                 <TouchableOpacity
@@ -1719,62 +2033,11 @@ const ManageDietsScreen = () => {
                   style={[styles.modalButton, styles.saveButton]}
                   onPress={addMealToPlan}
                 >
-                  <Text style={styles.buttonText}>Add Meal</Text>
+                  <Text style={styles.buttonText}>Add Meals</Text>
                 </TouchableOpacity>
               </View>
             </ScrollView>
           </SafeAreaView>
-        </Modal>
-
-        {/* Swap Meals Modal */}
-        <Modal visible={showSwapModal} transparent animationType="slide">
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-              <View style={styles.modalHeader}>
-                <TouchableOpacity onPress={() => setShowSwapModal(false)}>
-                  <Text style={styles.closeButton}>✕</Text>
-                </TouchableOpacity>
-                <Text style={styles.modalTitle}>
-                  Swap Options for {swapMeal?.name || "Meal"}
-                </Text>
-                <View style={{ width: 30 }} />
-              </View>
-
-              <Text style={styles.sectionTitle}>Approved Swaps</Text>
-              {mealSwaps.length === 0 ? (
-                <Text style={styles.emptyStateSubtext}>
-                  No swap meals added yet
-                </Text>
-              ) : (
-                mealSwaps.map((m) => (
-                  <View key={m.id} style={styles.swapRow}>
-                    <Text style={styles.swapMealName}>{m.name}</Text>
-                    <TouchableOpacity
-                      style={[styles.actionBtn, styles.deleteBtn]}
-                      onPress={() => removeMealSwap(m.id)}
-                    >
-                      <Text style={styles.actionBtnText}>Remove</Text>
-                    </TouchableOpacity>
-                  </View>
-                ))
-              )}
-
-              <Text style={styles.sectionTitle}>Add Swap Meal</Text>
-              <ScrollView style={{ maxHeight: 200 }}>
-                {meals
-                  .filter((m) => m.id !== swapMeal?.id)
-                  .map((m) => (
-                    <TouchableOpacity
-                      key={m.id}
-                      style={styles.selectOption}
-                      onPress={() => addMealSwap(m.id)}
-                    >
-                      <Text style={styles.selectOptionText}>{m.name}</Text>
-                    </TouchableOpacity>
-                  ))}
-              </ScrollView>
-            </View>
-          </View>
         </Modal>
 
         {/* Plan Assign Modal */}
@@ -1832,35 +2095,46 @@ const ManageDietsScreen = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#1a1a1a",
+    backgroundColor: "#0f0f0f",
   },
   header: {
-    backgroundColor: "#FF6B35",
-    padding: 20,
-    paddingTop: 50,
+    backgroundColor: "linear-gradient(135deg, #FF6B35 0%, #FF8A5B 100%)",
+    padding: 24,
+    paddingTop: 54,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
   },
   title: {
     fontSize: 28,
-    fontWeight: "700",
+    fontWeight: "800",
     color: "#fff",
+    letterSpacing: -0.5,
+    lineHeight: 34,
   },
   subtitle: {
     fontSize: 14,
-    color: "#FFE5DC",
-    marginTop: 6,
+    color: "rgba(255,255,255,0.85)",
+    marginTop: 8,
+    fontWeight: "500",
   },
   content: {
+    flex: 1,
     padding: 20,
   },
   createButton: {
     backgroundColor: "#FF6B35",
-    borderRadius: 14,
+    borderRadius: 16,
     padding: 18,
     alignItems: "center",
     marginBottom: 24,
     flexDirection: "row",
     justifyContent: "center",
-    gap: 10,
+    gap: 12,
+    shadowColor: "#FF6B35",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
   },
   createButtonIcon: {
     fontSize: 24,
@@ -1873,96 +2147,112 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 18,
     fontWeight: "700",
-    color: "#333",
+    color: "#fff",
     marginBottom: 16,
   },
   mealCard: {
-    backgroundColor: "#fff",
-    borderRadius: 14,
+    backgroundColor: "rgba(28, 33, 40, 0.6)",
+    borderRadius: 16,
     padding: 16,
-    marginBottom: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "rgba(255, 107, 53, 0.2)",
   },
   mealHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 16,
+    marginBottom: 12,
   },
   mealInfo: {
     flex: 1,
     marginRight: 12,
   },
   mealName: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "700",
-    color: "#1a1a1a",
-    marginBottom: 6,
+    color: "#fff",
+    marginBottom: 4,
   },
   mealDescription: {
-    fontSize: 13,
-    color: "#666",
-    lineHeight: 18,
+    fontSize: 12,
+    color: "rgba(255,255,255,0.6)",
+    lineHeight: 16,
   },
   mealImage: {
-    width: 80,
-    height: 80,
-    borderRadius: 10,
-    backgroundColor: "#f0f0f0",
+    width: 70,
+    height: 70,
+    borderRadius: 12,
+    backgroundColor: "rgba(255, 107, 53, 0.1)",
   },
   macrosContainer: {
     flexDirection: "row",
-    gap: 10,
-    marginBottom: 16,
+    gap: 8,
+    marginBottom: 12,
   },
   macroBox: {
     flex: 1,
-    backgroundColor: "#f5f5f5",
-    borderRadius: 10,
+    backgroundColor: "rgba(255, 107, 53, 0.1)",
+    borderRadius: 12,
     padding: 10,
     alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255, 107, 53, 0.25)",
   },
   macroLabel: {
-    fontSize: 12,
-    color: "#666",
+    fontSize: 11,
+    color: "rgba(255,255,255,0.6)",
     fontWeight: "600",
     marginBottom: 4,
   },
   macroValue: {
     fontSize: 16,
-    fontWeight: "700",
+    fontWeight: "800",
     color: "#FF6B35",
   },
   macroUnit: {
-    fontSize: 11,
-    color: "#999",
+    fontSize: 10,
+    color: "rgba(255,255,255,0.4)",
     marginTop: 2,
   },
   ingredientsSection: {
-    backgroundColor: "#f9f9f9",
-    borderRadius: 10,
+    backgroundColor: "rgba(255, 107, 53, 0.08)",
+    borderRadius: 12,
     padding: 12,
-    marginBottom: 16,
+    marginBottom: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: "#FF6B35",
   },
   ingredientsTitle: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: "700",
-    color: "#333",
-    marginBottom: 8,
+    color: "#FFE5DC",
+    marginBottom: 6,
   },
   ingredientsText: {
-    fontSize: 12,
-    color: "#666",
-    lineHeight: 18,
+    fontSize: 11,
+    color: "rgba(255,255,255,0.6)",
+    lineHeight: 16,
+  },
+  mealCategoryBadge: {
+    alignSelf: "flex-start",
+    marginTop: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,107,53,0.45)",
+    backgroundColor: "rgba(255,107,53,0.18)",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  mealCategoryBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#FFE5DC",
+    letterSpacing: 0.3,
   },
   actionButtons: {
     flexDirection: "row",
     gap: 8,
-    flexWrap: "wrap",
   },
   actionBtn: {
     flex: 1,
@@ -1978,9 +2268,6 @@ const styles = StyleSheet.create({
   },
   deleteBtn: {
     backgroundColor: "#FF3B30",
-  },
-  swapBtn: {
-    backgroundColor: "#8E44AD",
   },
   planMealsBtn: {
     backgroundColor: "#34C759",
@@ -2100,16 +2387,51 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   selectOptionActive: {
-    backgroundColor: "rgba(255,107,53,0.2)",
+    backgroundColor: "#FF6B35",
+    borderWidth: 1,
+    borderColor: "#FF6B35",
   },
   selectOptionText: {
     fontSize: 14,
     color: "#333",
   },
+  selectOptionTextActive: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+  },
   selectOptionSubtext: {
     fontSize: 12,
     color: "#999",
     marginTop: 4,
+  },
+  selectOptionSubtextActive: {
+    color: "#FFE5DC",
+  },
+  categoryOptionsWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  categoryOptionChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,107,53,0.35)",
+    backgroundColor: "rgba(255,107,53,0.08)",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  categoryOptionChipActive: {
+    borderColor: "#FF6B35",
+    backgroundColor: "rgba(255,107,53,0.3)",
+  },
+  categoryOptionChipText: {
+    color: "#FFE5DC",
+    fontSize: 13,
+    fontWeight: "600",
+  },
+  categoryOptionChipTextActive: {
+    color: "#fff",
+    fontWeight: "700",
   },
   formGroupRow: {
     flexDirection: "row",
@@ -2117,26 +2439,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 16,
   },
-  swapRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 8,
-  },
-  swapMealName: {
-    fontSize: 14,
-    color: "#333",
-    flex: 1,
-  },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    backgroundColor: "rgba(0, 0, 0, 0.6)",
     paddingTop: 40,
   },
   modalContent: {
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    backgroundColor: "#1a1a1a",
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
     padding: 24,
     maxHeight: "95%",
   },
@@ -2148,16 +2459,17 @@ const styles = StyleSheet.create({
   },
   closeButton: {
     fontSize: 28,
-    color: "#333",
+    color: "#FFE5DC",
     fontWeight: "700",
   },
   modalTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#1a1a1a",
+    fontSize: 22,
+    fontWeight: "800",
+    color: "#fff",
+    letterSpacing: -0.5,
   },
   form: {
-    gap: 16,
+    gap: 20,
   },
   formGroup: {
     marginBottom: 8,
@@ -2165,22 +2477,35 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: "700",
-    color: "#333",
-    marginBottom: 8,
+    color: "#FFE5DC",
+    marginBottom: 10,
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
   },
   input: {
-    borderWidth: 1.5,
-    borderColor: "#e0e0e0",
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 14,
-    color: "#1a1a1a",
-    backgroundColor: "#f9f9f9",
+    borderWidth: 1,
+    borderColor: "rgba(255, 107, 53, 0.3)",
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 15,
+    backgroundColor: "rgba(255, 107, 53, 0.05)",
+    color: "#fff",
   },
   textArea: {
-    textAlignVertical: "top",
     minHeight: 100,
+    textAlignVertical: "top",
+  },
+  cancelButton: {
+    backgroundColor: "rgba(255, 107, 53, 0.2)",
+  },
+  saveButton: {
+    backgroundColor: "#FF6B35",
+  },
+  buttonText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 16,
   },
   imageButton: {
     borderWidth: 2,
@@ -2226,16 +2551,6 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 10,
     alignItems: "center",
-  },
-  cancelButton: {
-    backgroundColor: "#e0e0e0",
-  },
-  saveButton: {
-    backgroundColor: "#FF6B35",
-  },
-  buttonText: {
-    fontWeight: "700",
-    fontSize: 14,
   },
   clientButton: {
     borderWidth: 1.5,
@@ -2324,6 +2639,154 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#999",
     textAlign: "center",
+  },
+  macroSliderSection: {
+    gap: 20,
+  },
+  sliderGroup: {
+    gap: 8,
+  },
+  sliderHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  sliderLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#fff",
+  },
+  sliderValue: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#FF6B35",
+  },
+  slider: {
+    height: 50,
+    width: "100%",
+  },
+  calorieBreakdown: {
+    fontSize: 12,
+    color: "rgba(255,255,255,0.5)",
+    marginTop: 4,
+  },
+  macroSummary: {
+    backgroundColor: "rgba(255, 107, 53, 0.1)",
+    borderRadius: 8,
+    padding: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: "#FF6B35",
+    marginTop: 8,
+  },
+  macroSummaryText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#FFE5DC",
+  },
+  macroDescription: {
+    fontSize: 13,
+    color: "#999",
+    marginBottom: 16,
+    fontStyle: "italic",
+  },
+  macroCard: {
+    backgroundColor: "rgba(255, 107, 53, 0.08)",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: "#FF6B35",
+  },
+  macroCardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 12,
+  },
+  macroCardTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#fff",
+  },
+  macroCardSubtitle: {
+    fontSize: 12,
+    color: "#999",
+    marginTop: 2,
+  },
+  macroCardValue: {
+    alignItems: "flex-end",
+  },
+  macroCardValueNumber: {
+    fontSize: 24,
+    fontWeight: "900",
+    color: "#FF6B35",
+  },
+  macroCardValueUnit: {
+    fontSize: 12,
+    color: "#999",
+    marginTop: 2,
+  },
+  macroStats: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255, 107, 53, 0.2)",
+  },
+  macroStat: {
+    fontSize: 12,
+    color: "#FFE5DC",
+    fontWeight: "600",
+  },
+  macroSummaryContainer: {
+    backgroundColor: "rgba(255, 107, 53, 0.15)",
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 16,
+    borderLeftWidth: 4,
+    borderLeftColor: "#FF6B35",
+  },
+  macroSummaryRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  macroSummaryLabel: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#fff",
+  },
+  macroSummaryValue: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: "#FF6B35",
+    marginHorizontal: 8,
+  },
+  macroSummaryTarget: {
+    fontSize: 14,
+    color: "#999",
+  },
+  macroSummaryBreakdown: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(255, 107, 53, 0.2)",
+  },
+  macroBreakdownItem: {
+    alignItems: "center",
+  },
+  macroBreakdownLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#999",
+  },
+  macroBreakdownPercent: {
+    fontSize: 18,
+    fontWeight: "900",
+    color: "#FFE5DC",
+    marginTop: 4,
   },
 });
 

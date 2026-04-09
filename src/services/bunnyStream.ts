@@ -15,9 +15,13 @@
 import Constants from "expo-constants";
 
 const BUNNY_LIBRARY_ID =
-  Constants.expoConfig?.extra?.EXPO_PUBLIC_BUNNY_LIBRARY_ID || "";
+  process.env.EXPO_PUBLIC_BUNNY_LIBRARY_ID ||
+  Constants.expoConfig?.extra?.EXPO_PUBLIC_BUNNY_LIBRARY_ID ||
+  "";
 const BUNNY_API_KEY =
-  Constants.expoConfig?.extra?.EXPO_PUBLIC_BUNNY_API_KEY || "";
+  process.env.EXPO_PUBLIC_BUNNY_API_KEY ||
+  Constants.expoConfig?.extra?.EXPO_PUBLIC_BUNNY_API_KEY ||
+  "";
 const BUNNY_STREAM_API = "https://video.bunnycdn.com";
 
 interface BunnyVideo {
@@ -43,16 +47,23 @@ export const createVideo = async (
   title: string,
 ): Promise<{ guid: string; videoLibraryId: number } | null> => {
   try {
+    if (!BUNNY_LIBRARY_ID || !BUNNY_API_KEY) {
+      console.error(
+        "[Bunny] Missing credentials: Library ID or API Key not configured",
+      );
+      return null;
+    }
+
     console.log("[Bunny] Creating video with title:", title);
     console.log("[Bunny] Library ID:", BUNNY_LIBRARY_ID);
-    console.log("[Bunny] API Key present:", !!BUNNY_API_KEY);
+    console.log("[Bunny] API Key length:", BUNNY_API_KEY.length);
 
     const response = await fetch(
       `${BUNNY_STREAM_API}/library/${BUNNY_LIBRARY_ID}/videos`,
       {
         method: "POST",
         headers: {
-          AccessKey: BUNNY_API_KEY,
+          AccessKey: BUNNY_API_KEY.trim(),
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -97,39 +108,62 @@ export const uploadVideoFile = async (
     console.log("[Bunny] Reading file as blob...");
     const response = await fetch(fileUri);
     const blob = await response.blob();
-    console.log(
-      "[Bunny] File size:",
-      blob.size,
-      "bytes",
-      (blob.size / 1024 / 1024).toFixed(2),
-      "MB",
-    );
 
-    // Upload to Bunny
-    console.log("[Bunny] Uploading to Bunny Stream...");
-    const uploadResponse = await fetch(
-      `${BUNNY_STREAM_API}/library/${BUNNY_LIBRARY_ID}/videos/${videoId}`,
-      {
-        method: "PUT",
-        headers: {
-          AccessKey: BUNNY_API_KEY,
-          "Content-Type": "application/octet-stream",
-        },
-        body: blob,
-      },
-    );
-
-    console.log("[Bunny] Upload response status:", uploadResponse.status);
-    if (!uploadResponse.ok) {
-      const errorText = await uploadResponse.text();
-      console.error("[Bunny] Upload failed:", errorText);
-    } else {
-      console.log("[Bunny] Upload successful!");
+    if (!response.ok) {
+      throw new Error(`Failed to read file: ${response.statusText}`);
     }
 
-    return uploadResponse.ok;
+    const fileSizeMB = (blob.size / 1024 / 1024).toFixed(2);
+    console.log("[Bunny] File size:", fileSizeMB, "MB");
+
+    onProgress?.(0);
+
+    const uploadSuccess = await new Promise<boolean>((resolve) => {
+      const xhr = new XMLHttpRequest();
+
+      xhr.upload.addEventListener("progress", (e) => {
+        if (e.lengthComputable) {
+          const percentComplete = Math.round((e.loaded / e.total) * 100);
+          console.log("[Bunny] Upload progress:", percentComplete + "%");
+          onProgress?.(percentComplete);
+        }
+      });
+
+      xhr.addEventListener("load", () => {
+        if (xhr.status === 200 || xhr.status === 201) {
+          console.log("[Bunny] Upload successful!");
+          onProgress?.(100);
+          resolve(true);
+        } else {
+          console.error("[Bunny] Upload failed:", xhr.status);
+          resolve(false);
+        }
+      });
+
+      xhr.addEventListener("error", () => {
+        console.error("[Bunny] Upload error");
+        resolve(false);
+      });
+
+      xhr.addEventListener("timeout", () => {
+        console.error("[Bunny] Upload timeout");
+        resolve(false);
+      });
+
+      xhr.open(
+        "PUT",
+        `${BUNNY_STREAM_API}/library/${BUNNY_LIBRARY_ID}/videos/${videoId}`,
+      );
+      xhr.setRequestHeader("AccessKey", BUNNY_API_KEY.trim());
+      xhr.setRequestHeader("Content-Type", "application/octet-stream");
+      xhr.timeout = 300000;
+      xhr.send(blob);
+    });
+
+    return uploadSuccess;
   } catch (error) {
     console.error("Error uploading video to Bunny:", error);
+    onProgress?.(0);
     return false;
   }
 };
@@ -189,7 +223,14 @@ export const deleteVideo = async (videoId: string): Promise<boolean> => {
 };
 
 /**
- * Get the playable video URL for a Bunny video
+ * Get the embedded iframe URL for Bunny Stream (standardized format for all videos)
+ */
+export const getVideoEmbedUrl = (videoId: string): string => {
+  return `https://iframe.mediadelivery.net/embed/${BUNNY_LIBRARY_ID}/${videoId}`;
+};
+
+/**
+ * Get the playable video URL for a Bunny video (HLS stream)
  */
 export const getVideoPlayUrl = (videoId: string): string => {
   return `https://vz-${BUNNY_LIBRARY_ID}.b-cdn.net/${videoId}/playlist.m3u8`;
@@ -200,6 +241,16 @@ export const getVideoPlayUrl = (videoId: string): string => {
  */
 export const getVideoThumbnailUrl = (videoId: string): string => {
   return `https://vz-${BUNNY_LIBRARY_ID}.b-cdn.net/${videoId}/thumbnail.jpg`;
+};
+
+/**
+ * Format a video URL in standardized embed format
+ */
+export const formatBunnyVideoUrl = (
+  libraryId: string | number,
+  videoId: string,
+): string => {
+  return `https://iframe.mediadelivery.net/embed/${libraryId}/${videoId}`;
 };
 
 /**

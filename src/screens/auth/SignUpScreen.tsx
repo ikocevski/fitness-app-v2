@@ -4,11 +4,13 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   StyleSheet,
   ActivityIndicator,
   Alert,
   ScrollView,
   KeyboardAvoidingView,
+  Keyboard,
   Platform,
   Image,
 } from "react-native";
@@ -91,174 +93,180 @@ const SignUpScreen: React.FC<SignUpScreenProps> = ({ navigation }) => {
   };
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
-      style={styles.container}
-    >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
+    <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+        style={styles.container}
       >
-        <View style={styles.headerContainer}>
-          <TouchableOpacity
-            onPress={() => navigation.goBack()}
-            disabled={loading}
-            style={styles.backButton}
-          >
-            <Text style={styles.backButtonText}>← Back</Text>
-          </TouchableOpacity>
-          <View style={styles.logoFrame}>
-            <Image
-              source={require("../../../assets/1.png")}
-              style={styles.logo}
-              resizeMode="cover"
-            />
-          </View>
-        </View>
-
-        <View style={styles.formContainer}>
-          {/* Name Input */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Full Name</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your full name"
-              placeholderTextColor="#999"
-              autoCapitalize="words"
-              value={name}
-              onChangeText={setName}
-              editable={!loading}
-            />
-          </View>
-
-          {/* Email Input */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Email Address</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Enter your email"
-              placeholderTextColor="#999"
-              keyboardType="email-address"
-              autoCapitalize="none"
-              value={email}
-              onChangeText={setEmail}
-              editable={!loading}
-            />
-          </View>
-
-          {/* Password Input */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Password</Text>
-            <Text style={styles.helperText}>At least 8 characters</Text>
-            <View style={styles.passwordContainer}>
-              <TextInput
-                style={styles.passwordInput}
-                placeholder="Enter your password"
-                placeholderTextColor="#999"
-                secureTextEntry={!showPassword}
-                value={password}
-                onChangeText={setPassword}
-                editable={!loading}
-              />
-              <TouchableOpacity
-                onPress={() => setShowPassword(!showPassword)}
-                disabled={loading}
-                style={styles.eyeButton}
-              >
-                <Text style={styles.eyeButtonText}>
-                  {showPassword ? "Hide" : "Show"}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Confirm Password Input */}
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Confirm Password</Text>
-            <View style={styles.passwordContainer}>
-              <TextInput
-                style={styles.passwordInput}
-                placeholder="Confirm your password"
-                placeholderTextColor="#999"
-                secureTextEntry={!showConfirmPassword}
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                editable={!loading}
-              />
-              <TouchableOpacity
-                onPress={() => setShowConfirmPassword(!showConfirmPassword)}
-                disabled={loading}
-                style={styles.eyeButton}
-              >
-                <Text style={styles.eyeButtonText}>
-                  {showConfirmPassword ? "Hide" : "Show"}
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {/* Terms Agreement */}
-          <View style={styles.termsContainer}>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={
+            Platform.OS === "ios" ? "interactive" : "on-drag"
+          }
+        >
+          <View style={styles.headerContainer}>
             <TouchableOpacity
-              onPress={() => setAgreeToTerms(!agreeToTerms)}
+              onPress={() => navigation.goBack()}
               disabled={loading}
-              style={styles.checkboxContainer}
+              style={styles.backButton}
             >
-              <View
-                style={[
-                  styles.checkbox,
-                  agreeToTerms && styles.checkboxChecked,
-                ]}
-              >
-                {agreeToTerms && <Text style={styles.checkmark}>✓</Text>}
+              <Text style={styles.backButtonText}>← Back</Text>
+            </TouchableOpacity>
+            <View style={styles.logoFrame}>
+              <Image
+                source={require("../../../assets/1.png")}
+                style={styles.logo}
+                resizeMode="cover"
+              />
+            </View>
+          </View>
+
+          <View style={styles.formContainer}>
+            {/* Name Input */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Full Name</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your full name"
+                placeholderTextColor="#999"
+                autoCapitalize="words"
+                value={name}
+                onChangeText={setName}
+                editable={!loading}
+              />
+            </View>
+
+            {/* Email Input */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Email Address</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Enter your email"
+                placeholderTextColor="#999"
+                keyboardType="email-address"
+                autoCapitalize="none"
+                value={email}
+                onChangeText={setEmail}
+                editable={!loading}
+              />
+            </View>
+
+            {/* Password Input */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Password</Text>
+              <Text style={styles.helperText}>At least 8 characters</Text>
+              <View style={styles.passwordContainer}>
+                <TextInput
+                  style={styles.passwordInput}
+                  placeholder="Enter your password"
+                  placeholderTextColor="#999"
+                  secureTextEntry={!showPassword}
+                  value={password}
+                  onChangeText={setPassword}
+                  editable={!loading}
+                />
+                <TouchableOpacity
+                  onPress={() => setShowPassword(!showPassword)}
+                  disabled={loading}
+                  style={styles.eyeButton}
+                >
+                  <Text style={styles.eyeButtonText}>
+                    {showPassword ? "Hide" : "Show"}
+                  </Text>
+                </TouchableOpacity>
               </View>
-              <Text style={styles.termsText}>
-                I agree to the Terms of Service
-              </Text>
-            </TouchableOpacity>
-          </View>
+            </View>
 
-          {/* Sign Up Button */}
-          <TouchableOpacity
-            style={[
-              styles.signUpButton,
-              loading && styles.signUpButtonDisabled,
-            ]}
-            onPress={handleSignUp}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.signUpButtonText}>Create Account</Text>
-            )}
-          </TouchableOpacity>
+            {/* Confirm Password Input */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.label}>Confirm Password</Text>
+              <View style={styles.passwordContainer}>
+                <TextInput
+                  style={styles.passwordInput}
+                  placeholder="Confirm your password"
+                  placeholderTextColor="#999"
+                  secureTextEntry={!showConfirmPassword}
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  editable={!loading}
+                />
+                <TouchableOpacity
+                  onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+                  disabled={loading}
+                  style={styles.eyeButton}
+                >
+                  <Text style={styles.eyeButtonText}>
+                    {showConfirmPassword ? "Hide" : "Show"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
 
-          {/* Login Link */}
-          <View style={styles.loginContainer}>
-            <Text style={styles.loginText}>Already have an account? </Text>
+            {/* Terms Agreement */}
+            <View style={styles.termsContainer}>
+              <TouchableOpacity
+                onPress={() => setAgreeToTerms(!agreeToTerms)}
+                disabled={loading}
+                style={styles.checkboxContainer}
+              >
+                <View
+                  style={[
+                    styles.checkbox,
+                    agreeToTerms && styles.checkboxChecked,
+                  ]}
+                >
+                  {agreeToTerms && <Text style={styles.checkmark}>✓</Text>}
+                </View>
+                <Text style={styles.termsText}>
+                  I agree to the Terms of Service
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Sign Up Button */}
             <TouchableOpacity
-              onPress={() => navigation.navigate("Login")}
+              style={[
+                styles.signUpButton,
+                loading && styles.signUpButtonDisabled,
+              ]}
+              onPress={handleSignUp}
               disabled={loading}
             >
-              <Text style={styles.loginLink}>Login</Text>
+              {loading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.signUpButtonText}>Create Account</Text>
+              )}
             </TouchableOpacity>
-          </View>
-        </View>
 
-        {/* Password Requirements */}
-        <View style={styles.requirementsContainer}>
-          <Text style={styles.requirementsTitle}>Password Requirements:</Text>
-          <Text style={styles.requirementText}>✓ At least 8 characters</Text>
-          <Text style={styles.requirementText}>
-            ✓ Mix of letters, numbers, and symbols (recommended)
-          </Text>
-          <Text style={styles.requirementText}>
-            ✓ Avoid using personal information
-          </Text>
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+            {/* Login Link */}
+            <View style={styles.loginContainer}>
+              <Text style={styles.loginText}>Already have an account? </Text>
+              <TouchableOpacity
+                onPress={() => navigation.navigate("Login")}
+                disabled={loading}
+              >
+                <Text style={styles.loginLink}>Login</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Password Requirements */}
+          <View style={styles.requirementsContainer}>
+            <Text style={styles.requirementsTitle}>Password Requirements:</Text>
+            <Text style={styles.requirementText}>✓ At least 8 characters</Text>
+            <Text style={styles.requirementText}>
+              ✓ Mix of letters, numbers, and symbols (recommended)
+            </Text>
+            <Text style={styles.requirementText}>
+              ✓ Avoid using personal information
+            </Text>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </TouchableWithoutFeedback>
   );
 };
 

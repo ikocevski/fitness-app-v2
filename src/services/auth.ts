@@ -2,15 +2,39 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../config/supabase";
 import { User } from "../types";
 
+const PRIVILEGED_ADMIN_EMAIL = "ivan@gmail.com";
+
+const isPrivilegedAdminEmail = (email?: string | null): boolean =>
+  (email || "").trim().toLowerCase() === PRIVILEGED_ADMIN_EMAIL;
+
 const normalizeRole = (role?: string | null): "client" | "admin" | "new" => {
   const normalized = (role || "").toString().trim().toLowerCase();
+  if (normalized === PRIVILEGED_ADMIN_EMAIL) return "admin";
   if (normalized === "admin") return "admin";
+  if (normalized === "coach") return "admin";
   if (normalized === "new") return "new";
   return "client";
 };
 
+const hasCoachEntitlement = (userRow: any): boolean => {
+  const status = (userRow?.subscription_status || "").toString().toLowerCase();
+  const expiryRaw = userRow?.subscription_expires_at;
+  const expiryDate = expiryRaw ? new Date(expiryRaw) : null;
+  const hasFutureExpiry = expiryDate
+    ? expiryDate.getTime() > Date.now()
+    : false;
+
+  if (status === "active" || status === "trial") return true;
+  if (status === "canceled" && hasFutureExpiry) return true;
+  return false;
+};
+
 // Extract role from Supabase user object, checking multiple sources
 const extractAuthRole = (user: any): "client" | "admin" | "new" | null => {
+  if (isPrivilegedAdminEmail(user?.email)) {
+    return "admin";
+  }
+
   console.log("[extractAuthRole] user_metadata:", user?.user_metadata);
   console.log("[extractAuthRole] app_metadata:", user?.app_metadata);
   console.log(
@@ -60,7 +84,9 @@ export const login = async (
       // Check public.users table first (source of truth)
       let { data: userRow, error: userError } = await supabase
         .from("users")
-        .select("id, email, name, role")
+        .select(
+          "id, email, name, role, subscription_status, subscription_expires_at",
+        )
         .eq("id", data.user.id)
         .maybeSingle();
 
@@ -70,6 +96,8 @@ export const login = async (
 
       console.log("[login] User from public.users:", userRow);
 
+      const emailValue = userRow?.email || data.user.email || cleanEmail;
+
       // If user doesn't exist in public.users, create with auth role
       if (!userRow) {
         const nameValue =
@@ -77,7 +105,11 @@ export const login = async (
           (data.user.email ? data.user.email.split("@")[0] : "User");
 
         // Get role from auth metadata, default to "client"
-        const authRole = extractAuthRole(data.user) || "client";
+        const authRole =
+          isPrivilegedAdminEmail(cleanEmail) ||
+          isPrivilegedAdminEmail(data.user.email)
+            ? "admin"
+            : extractAuthRole(data.user) || "client";
 
         const newProfile = {
           id: data.user.id,
@@ -85,6 +117,8 @@ export const login = async (
           name: nameValue,
           role: authRole,
           status: "pending",
+          subscription_status: null,
+          subscription_expires_at: null,
         };
 
         try {
@@ -101,10 +135,16 @@ export const login = async (
       console.log("[login] Auth role from extractAuthRole:", authRole);
 
       // Resolve role: prefer public.users, then auth metadata
-      const resolvedRole = normalizeRole(userRow?.role ?? authRole ?? null);
+      const roleFromData = isPrivilegedAdminEmail(emailValue)
+        ? "admin"
+        : normalizeRole(userRow?.role ?? authRole ?? null);
+      const resolvedRole = isPrivilegedAdminEmail(emailValue)
+        ? "admin"
+        : roleFromData === "client" && hasCoachEntitlement(userRow)
+          ? "admin"
+          : roleFromData;
       console.log("[login] Resolved role:", resolvedRole);
 
-      const emailValue = userRow?.email || data.user.email || cleanEmail;
       // Use profile name first, fallback to email prefix - NEVER use auth metadata name
       const nameValue =
         userRow?.name ||
@@ -157,8 +197,10 @@ export const signUp = async (
     const { data, error } = await supabase.auth.signUp({
       email: cleanEmail,
       password,
-      data: {
-        role: role, // Store role in auth metadata
+      options: {
+        data: {
+          role: role, // Store role in auth metadata
+        },
       },
     });
 
@@ -183,7 +225,7 @@ export const signUp = async (
 
     if (data.user) {
       // New sign-ups always get role "new" - requires admin approval
-      const profile = {
+      const profile: User = {
         id: data.user.id,
         email: cleanEmail,
         name: safeName,
@@ -247,7 +289,9 @@ export const getCurrentUser = async (): Promise<User | null> => {
     // Check public.users table first (source of truth)
     const { data: userRow, error: userError } = await supabase
       .from("users")
-      .select("id, email, name, role")
+      .select(
+        "id, email, name, role, subscription_status, subscription_expires_at",
+      )
       .eq("id", session.user.id)
       .maybeSingle();
 
@@ -257,15 +301,23 @@ export const getCurrentUser = async (): Promise<User | null> => {
 
     console.log("[getCurrentUser] User from public.users:", userRow);
 
+    const emailValue = userRow?.email || session.user.email || "";
+
     // Auth metadata role as fallback
     const authRole = extractAuthRole(session.user);
     console.log("[getCurrentUser] Auth role from extractAuthRole:", authRole);
 
     // Resolve role: prefer public.users, then auth metadata
-    const resolvedRole = normalizeRole(userRow?.role ?? authRole ?? null);
+    const roleFromData = isPrivilegedAdminEmail(emailValue)
+      ? "admin"
+      : normalizeRole(userRow?.role ?? authRole ?? null);
+    const resolvedRole = isPrivilegedAdminEmail(emailValue)
+      ? "admin"
+      : roleFromData === "client" && hasCoachEntitlement(userRow)
+        ? "admin"
+        : roleFromData;
     console.log("[getCurrentUser] Resolved role:", resolvedRole);
 
-    const emailValue = userRow?.email || session.user.email || "";
     // Use profile name first, fallback to email prefix - NEVER use auth metadata name
     // This prevents old names from persisting if profile is deleted
     const nameValue =

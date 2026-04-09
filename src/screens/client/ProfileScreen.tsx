@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
   View,
   Text,
@@ -8,8 +8,6 @@ import {
   ActivityIndicator,
   ScrollView,
   SafeAreaView,
-  Modal,
-  TextInput,
 } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { useAuth } from "../../context/AuthContext";
@@ -28,12 +26,9 @@ const ProfileScreen = () => {
   const { user, logout, loading } = useAuth();
   const [loggingOut, setLoggingOut] = useState(false);
   const [weightLogs, setWeightLogs] = useState<WeightLog[]>([]);
-  const [weeklyAverage, setWeeklyAverage] = useState<number | null>(null);
+  const [currentWeekLogCount, setCurrentWeekLogCount] = useState(0);
+  const [currentWeekRangeLabel, setCurrentWeekRangeLabel] = useState("");
   const [loadingWeights, setLoadingWeights] = useState(true);
-  const [editModalVisible, setEditModalVisible] = useState(false);
-  const [editingLog, setEditingLog] = useState<WeightLog | null>(null);
-  const [editWeight, setEditWeight] = useState("");
-  const [savingWeight, setSavingWeight] = useState(false);
   const [unit, setUnit] = useState<"kg" | "lbs">("kg");
   const [showWeightModal, setShowWeightModal] = useState(false);
 
@@ -66,6 +61,23 @@ const ProfileScreen = () => {
     return convertWeight(weightInKg).toFixed(1);
   };
 
+  const getStartOfWeekMonday = (date: Date) => {
+    const normalized = new Date(date);
+    normalized.setHours(0, 0, 0, 0);
+    const day = normalized.getDay();
+    const diffToMonday = day === 0 ? -6 : 1 - day;
+    normalized.setDate(normalized.getDate() + diffToMonday);
+    return normalized;
+  };
+
+  const formatWeekRange = (start: Date, end: Date) => {
+    const formatOptions: Intl.DateTimeFormatOptions = {
+      month: "short",
+      day: "numeric",
+    };
+    return `${start.toLocaleDateString("en-US", formatOptions)} - ${end.toLocaleDateString("en-US", formatOptions)}`;
+  };
+
   const fetchWeightLogs = async () => {
     try {
       const { data, error } = await supabase
@@ -79,37 +91,28 @@ const ProfileScreen = () => {
 
       setWeightLogs(data || []);
 
-      // Calculate weekly average
-      if (data && data.length > 0) {
-        const oneWeekAgo = new Date();
-        oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+      const today = new Date();
+      const currentWeekStart = getStartOfWeekMonday(today);
+      const currentWeekEnd = new Date(currentWeekStart);
+      currentWeekEnd.setDate(currentWeekEnd.getDate() + 6);
+      currentWeekEnd.setHours(23, 59, 59, 999);
 
-        const recentLogs = data.filter(
-          (log) => new Date(log.logged_at) >= oneWeekAgo,
-        );
+      setCurrentWeekRangeLabel(
+        formatWeekRange(currentWeekStart, currentWeekEnd),
+      );
 
-        if (recentLogs.length > 0) {
-          const avg =
-            recentLogs.reduce((sum, log) => sum + log.weight, 0) /
-            recentLogs.length;
-          setWeeklyAverage(Math.round(avg * 10) / 10);
-        }
-      }
+      const currentWeekLogs = (data || []).filter((log) => {
+        const loggedDate = new Date(log.logged_at);
+        return loggedDate >= currentWeekStart && loggedDate <= currentWeekEnd;
+      });
+
+      setCurrentWeekLogCount(currentWeekLogs.length);
     } catch (error) {
       console.error("Error fetching weight logs:", error);
       Alert.alert("Error", "Failed to load weight data");
     } finally {
       setLoadingWeights(false);
     }
-  };
-
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
   };
 
   const handleLogout = async () => {
@@ -127,121 +130,7 @@ const ProfileScreen = () => {
     ]);
   };
 
-  const handleEditWeight = (log: WeightLog) => {
-    setEditingLog(log);
-    // Convert to user's preferred unit for editing
-    const weightInPreferredUnit = convertWeight(log.weight);
-    setEditWeight(weightInPreferredUnit.toFixed(1));
-    setEditModalVisible(true);
-  };
-
-  const handleSaveEditedWeight = async () => {
-    if (!editWeight || isNaN(parseFloat(editWeight)) || !editingLog) {
-      Alert.alert("Error", "Please enter a valid weight");
-      return;
-    }
-
-    try {
-      setSavingWeight(true);
-
-      // Convert back to kg if user is using lbs
-      const weightInKg =
-        unit === "lbs"
-          ? parseFloat(editWeight) * 0.453592
-          : parseFloat(editWeight);
-
-      console.log("Attempting to update weight log:", {
-        id: editingLog.id,
-        oldWeight: editingLog.weight,
-        newWeight: weightInKg,
-        unit: unit,
-        userId: user?.id,
-      });
-
-      const { data, error } = await supabase
-        .from("weight_logs")
-        .update({ weight: weightInKg })
-        .eq("id", editingLog.id)
-        .eq("user_id", user?.id)
-        .select();
-
-      console.log("Update response:", { data, error });
-
-      if (error) {
-        console.error("Supabase error details:", error);
-        throw error;
-      }
-
-      if (!data || data.length === 0) {
-        throw new Error(
-          "No rows were updated. Check RLS policies in Supabase.",
-        );
-      }
-
-      Alert.alert("Success", "Weight updated successfully!");
-      setEditModalVisible(false);
-      setEditingLog(null);
-      setEditWeight("");
-      await fetchWeightLogs();
-    } catch (error: any) {
-      console.error("Error updating weight:", error);
-      Alert.alert(
-        "Error",
-        error.message ||
-          "Failed to update weight. Please check Supabase RLS policies.",
-      );
-    } finally {
-      setSavingWeight(false);
-    }
-  };
-
-  const handleDeleteWeight = (logId: string) => {
-    Alert.alert("Delete Entry", "Are you sure you want to delete this entry?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Delete",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            console.log("Attempting to delete weight log:", {
-              logId,
-              userId: user?.id,
-            });
-
-            const { data, error } = await supabase
-              .from("weight_logs")
-              .delete()
-              .eq("id", logId)
-              .eq("user_id", user?.id)
-              .select();
-
-            console.log("Delete response:", { data, error });
-
-            if (error) {
-              console.error("Supabase error details:", error);
-              throw error;
-            }
-
-            if (!data || data.length === 0) {
-              throw new Error(
-                "No rows were deleted. Check RLS policies in Supabase.",
-              );
-            }
-
-            Alert.alert("Success", "Entry deleted successfully!");
-            await fetchWeightLogs();
-          } catch (error: any) {
-            console.error("Error deleting weight:", error);
-            Alert.alert(
-              "Error",
-              error.message ||
-                "Failed to delete entry. Please check Supabase RLS policies.",
-            );
-          }
-        },
-      },
-    ]);
-  };
+  const latestLog = weightLogs[0] || null;
 
   if (loading) {
     return (
@@ -257,52 +146,11 @@ const ProfileScreen = () => {
         visible={showWeightModal}
         onClose={() => setShowWeightModal(false)}
         userId={user?.id || ""}
+        initialDate={new Date()}
         onWeightSaved={async () => {
           await fetchWeightLogs();
         }}
       />
-      <Modal
-        visible={editModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setEditModalVisible(false)}
-      >
-        <View style={styles.editOverlay}>
-          <View style={styles.editModalContainer}>
-            <Text style={styles.editModalTitle}>Edit Weight ({unit})</Text>
-            <TextInput
-              style={styles.editInput}
-              placeholder={`Enter new weight in ${unit}`}
-              placeholderTextColor="#aaa"
-              keyboardType="decimal-pad"
-              value={editWeight}
-              onChangeText={setEditWeight}
-              editable={!savingWeight}
-              maxLength={6}
-            />
-            <View style={styles.editButtonContainer}>
-              <TouchableOpacity
-                style={styles.editCancelButton}
-                onPress={() => setEditModalVisible(false)}
-                disabled={savingWeight}
-              >
-                <Text style={styles.editCancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.editSaveButton}
-                onPress={handleSaveEditedWeight}
-                disabled={savingWeight}
-              >
-                {savingWeight ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <Text style={styles.editSaveButtonText}>Save</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
 
       <SafeAreaView style={styles.container}>
         <ScrollView
@@ -327,108 +175,49 @@ const ProfileScreen = () => {
 
           {/* Weight Stats */}
           <View style={styles.statsSection}>
-            <Text style={styles.sectionTitle}>Weight Progress</Text>
-            {loadingWeights ? (
-              <ActivityIndicator size="small" color={palette.accent} />
-            ) : weightLogs.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyStateIcon}>⚖️</Text>
-                <Text style={styles.emptyStateText}>No weight logs yet</Text>
-                <Text style={styles.emptyStateSubtext}>
-                  Tap the button below to log your weight and start tracking
+            <View style={styles.progressPanel}>
+              <View style={styles.progressHeader}>
+                <Text style={styles.sectionTitle}>Weight Progress</Text>
+                <Text style={styles.progressSubtitle}>
+                  Track weekly consistency and keep your current weight updated.
                 </Text>
-                <TouchableOpacity
-                  style={styles.logWeightButton}
-                  onPress={() => setShowWeightModal(true)}
-                >
-                  <Text style={styles.logWeightButtonText}>Log Weight Now</Text>
-                </TouchableOpacity>
               </View>
-            ) : (
-              <>
-                <View style={styles.metricsGrid}>
-                  <View style={styles.metricCard}>
-                    <Text style={styles.metricLabel}>Current</Text>
-                    <Text style={styles.metricValue}>
-                      {formatWeight(weightLogs[0]?.weight)}
+
+              {loadingWeights ? (
+                <ActivityIndicator size="small" color={palette.accent} />
+              ) : (
+                <>
+                  <View style={styles.snapshotRow}>
+                    <Text style={styles.snapshotPill}>
+                      Week: {currentWeekRangeLabel || "Mon - Sun"}
                     </Text>
-                    <Text style={styles.metricUnit}>{unit}</Text>
+                    <Text style={styles.snapshotPill}>
+                      Logs: {currentWeekLogCount}/7
+                    </Text>
                   </View>
 
-                  {weeklyAverage && (
-                    <View style={styles.metricCard}>
-                      <Text style={styles.metricLabel}>Weekly</Text>
-                      <Text style={styles.metricValue}>
-                        {formatWeight(weeklyAverage)}
+                  <View style={styles.currentWeightCard}>
+                    <Text style={styles.currentWeightLabel}>
+                      Current Weight
+                    </Text>
+                    <View style={styles.currentWeightValueRow}>
+                      <Text style={styles.currentWeightValue}>
+                        {formatWeight(latestLog?.weight || 0)}
                       </Text>
-                      <Text style={styles.metricUnit}>{unit}</Text>
+                      <Text style={styles.currentWeightUnit}>{unit}</Text>
                     </View>
-                  )}
-
-                  {weightLogs.length > 1 && (
-                    <View style={styles.metricCard}>
-                      <Text style={styles.metricLabel}>Change</Text>
-                      <Text
-                        style={[
-                          styles.metricValue,
-                          {
-                            color:
-                              weightLogs[0].weight -
-                                weightLogs[weightLogs.length - 1].weight >
-                              0
-                                ? "#34C759"
-                                : "#FF3B30",
-                          },
-                        ]}
-                      >
-                        {formatWeight(
-                          Math.abs(
-                            weightLogs[0].weight -
-                              weightLogs[weightLogs.length - 1].weight,
-                          ),
-                        )}
-                      </Text>
-                      <Text style={styles.metricUnit}>{unit}</Text>
-                    </View>
-                  )}
-                </View>
-
-                {/* Weight History */}
-                <View style={styles.historySection}>
-                  <Text style={styles.historyTitle}>Recent Entries</Text>
-                  <View style={styles.historyList}>
-                    {weightLogs.slice(0, 5).map((log, index) => (
-                      <View key={log.id} style={styles.historyItem}>
-                        <View style={styles.historyLeft}>
-                          <Text style={styles.historyDate}>
-                            {formatDate(log.logged_at)}
-                          </Text>
-                        </View>
-                        <View style={styles.historyMiddle}>
-                          <Text style={styles.historyWeight}>
-                            {formatWeight(log.weight)} {unit}
-                          </Text>
-                        </View>
-                        <View style={styles.historyActions}>
-                          <TouchableOpacity
-                            onPress={() => handleEditWeight(log)}
-                            style={styles.editButton}
-                          >
-                            <Text style={styles.editButtonText}>✏️</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            onPress={() => handleDeleteWeight(log.id)}
-                            style={styles.deleteButton}
-                          >
-                            <Text style={styles.deleteButtonText}>🗑️</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    ))}
                   </View>
-                </View>
-              </>
-            )}
+
+                  <TouchableOpacity
+                    style={styles.quickLogButton}
+                    onPress={() => setShowWeightModal(true)}
+                  >
+                    <Text style={styles.quickLogButtonIcon}>✎</Text>
+                    <Text style={styles.quickLogButtonText}>Log / Edit</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
           </View>
 
           {/* Logout Button */}
@@ -471,7 +260,7 @@ const styles = StyleSheet.create({
   headerSection: {
     alignItems: "center",
     paddingVertical: spacing.xl,
-    backgroundColor: "linear-gradient(135deg, #5B7FFF 0%, #4A68E6 100%)",
+    backgroundColor: palette.background,
   },
   avatarContainer: {
     width: 80,
@@ -519,11 +308,53 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     marginBottom: spacing.lg,
   },
+  progressPanel: {
+    backgroundColor: palette.surface,
+    borderRadius: radii.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: palette.border,
+    ...shadows.card,
+  },
+  progressHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: spacing.sm,
+    gap: spacing.sm,
+  },
+  progressSubtitle: {
+    fontSize: 12,
+    color: palette.textSecondary,
+    marginTop: 2,
+  },
+  quickLogButton: {
+    backgroundColor: "#5B7FFF",
+    borderRadius: radii.lg,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    ...shadows.button,
+  },
+  quickLogButtonIcon: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "900",
+  },
+  quickLogButtonText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "800",
+  },
   sectionTitle: {
     fontSize: 20,
     fontWeight: "800",
     color: palette.textPrimary,
-    marginBottom: spacing.md,
+    marginBottom: 0,
     letterSpacing: -0.6,
     lineHeight: 26,
   },
@@ -564,18 +395,69 @@ const styles = StyleSheet.create({
   },
   metricsGrid: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: spacing.sm,
     marginBottom: spacing.md,
   },
+  currentWeightCard: {
+    backgroundColor: "rgba(91,127,255,0.08)",
+    borderRadius: radii.lg,
+    padding: spacing.lg,
+    marginTop: spacing.md,
+    marginBottom: spacing.md,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(91,127,255,0.25)",
+  },
+  currentWeightLabel: {
+    fontSize: 12,
+    color: palette.textSecondary,
+    marginBottom: spacing.sm,
+    textTransform: "uppercase",
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
+  currentWeightValueRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  currentWeightValue: {
+    fontSize: 44,
+    fontWeight: "800",
+    color: "#5B7FFF",
+    letterSpacing: -1,
+    lineHeight: 52,
+  },
+  currentWeightUnit: {
+    fontSize: 16,
+    color: palette.textSecondary,
+    fontWeight: "700",
+    marginTop: spacing.sm,
+  },
+  currentWeightHint: {
+    marginTop: spacing.sm,
+    fontSize: 12,
+    color: palette.textSecondary,
+  },
   metricCard: {
-    flex: 1,
-    backgroundColor: palette.surface,
+    width: "48.5%",
     borderRadius: radii.lg,
     padding: spacing.md,
     alignItems: "center",
     borderWidth: 1,
     borderColor: palette.border,
-    ...shadows.card,
+    backgroundColor: "rgba(91,127,255,0.08)",
+  },
+  metricCardWide: {
+    width: "100%",
+    backgroundColor: "rgba(91,127,255,0.12)",
+    borderRadius: radii.lg,
+    padding: spacing.md,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(91,127,255,0.35)",
   },
   metricLabel: {
     fontSize: 12,
@@ -588,17 +470,44 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#5B7FFF",
   },
+  metricGain: {
+    color: "#34C759",
+  },
+  metricLoss: {
+    color: "#FF6B6B",
+  },
+  metricNeutral: {
+    color: "#5B7FFF",
+  },
   metricUnit: {
     fontSize: 14,
     color: palette.textSecondary,
   },
+  progressHeader: {
+    marginBottom: spacing.md,
+  },
+  snapshotRow: {
+    flexDirection: "row",
+    gap: spacing.xs,
+    marginBottom: spacing.md,
+  },
+  snapshotPill: {
+    fontSize: 13,
+    color: "#DDE4FF",
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: "rgba(91,127,255,0.4)",
+    backgroundColor: "rgba(91,127,255,0.12)",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    fontWeight: "600",
+  },
   historySection: {
-    backgroundColor: palette.surface,
+    backgroundColor: "rgba(255,255,255,0.02)",
     borderRadius: radii.lg,
     padding: spacing.md,
     borderWidth: 1,
     borderColor: palette.border,
-    ...shadows.card,
   },
   historyTitle: {
     fontSize: 15,
@@ -609,11 +518,95 @@ const styles = StyleSheet.create({
   historyList: {
     gap: spacing.xs,
   },
+  weekCard: {
+    borderWidth: 1,
+    borderColor: palette.border,
+    borderRadius: radii.md,
+    backgroundColor: "rgba(255,255,255,0.03)",
+    padding: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  weekCardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: spacing.sm,
+  },
+  weekRangeText: {
+    color: palette.textPrimary,
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  weekLogsCount: {
+    color: "#DDE4FF",
+    fontSize: 11,
+    fontWeight: "700",
+    backgroundColor: "rgba(91,127,255,0.2)",
+    borderWidth: 1,
+    borderColor: "rgba(91,127,255,0.4)",
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  weekMetricsRow: {
+    flexDirection: "row",
+    gap: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  weekMetricItem: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: "rgba(91,127,255,0.22)",
+    borderRadius: radii.sm,
+    backgroundColor: "rgba(91,127,255,0.08)",
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    alignItems: "center",
+  },
+  weekMetricLabel: {
+    fontSize: 10,
+    textTransform: "uppercase",
+    color: palette.textSecondary,
+    marginBottom: 3,
+  },
+  weekMetricValue: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: palette.textPrimary,
+    textAlign: "center",
+  },
+  weekLogPillsRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: spacing.xs,
+  },
+  weekLogPill: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  weekLogPillText: {
+    color: palette.textSecondary,
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  weekLogPillValue: {
+    color: "#DDE4FF",
+    fontSize: 11,
+    fontWeight: "700",
+  },
   historyItem: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xs,
     borderBottomWidth: 1,
     borderBottomColor: palette.border,
   },
@@ -641,18 +634,26 @@ const styles = StyleSheet.create({
     gap: spacing.xs,
   },
   editButton: {
-    paddingHorizontal: spacing.xs,
-    paddingVertical: spacing.xs,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(91,127,255,0.2)",
   },
   editButtonText: {
-    fontSize: 16,
+    fontSize: 14,
   },
   deleteButton: {
-    paddingHorizontal: spacing.xs,
-    paddingVertical: spacing.xs,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(255,59,48,0.18)",
   },
   deleteButtonText: {
-    fontSize: 16,
+    fontSize: 14,
   },
   editOverlay: {
     flex: 1,

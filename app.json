@@ -4,12 +4,15 @@
     "slug": "cubefit",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/1.png",
+    "icon": "./assets/icon.png",
     "extra": {
       "EXPO_PUBLIC_SUPABASE_URL": "https://pyppumhjfcgxxuurytzb.supabase.co",
       "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB5cHB1bWhqZmNneHh1dXJ5dHpiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc0MzYyMTQsImV4cCI6MjA4MzAxMjIxNH0.Hc0_hz84PsNATVC5B0CAwv-PQtq0oCneY0kXGWfD198",
-      "EXPO_PUBLIC_BUNNY_LIBRARY_ID": "607669",
-      "EXPO_PUBLIC_BUNNY_API_KEY": "63b8ae49-f2c4-4497-a2832b414c4d-bd92-4a16"
+      "EXPO_PUBLIC_BUNNY_LIBRARY_ID": "627402",
+      "EXPO_PUBLIC_BUNNY_API_KEY": "b6a243b3-b199-4969-9d1b86ac75da-ef6e-48dc",
+      "eas": {
+        "projectId": "d015e400-a359-48d6-a418-56d4360977d1"
+      }
     },
     "updates": {
       "fallbackToCacheTimeout": 0
@@ -22,8 +25,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.fitnessapp",
-      "deploymentTarget": "15.0"
+      "bundleIdentifier": "com.ivankocevski.cubefit"
     },
     "android": {
       "package": "com.anonymous.fitnessapp",

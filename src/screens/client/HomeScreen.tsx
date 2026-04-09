@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   SafeAreaView,
+  Platform,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "../../context/AuthContext";
@@ -13,24 +14,190 @@ import WeightModal from "../../components/common/WeightModal";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { supabase } from "../../config/supabase";
 import { palette, radii, spacing, shadows, typography } from "../../theme";
+import * as Notifications from "expo-notifications";
+
+const SESSION_REMINDER_ID_KEY = "sessionReminderNotificationId";
+const SESSION_REMINDER_SESSION_KEY = "sessionReminderSessionKey";
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
+type UpcomingSession = {
+  id: string;
+  title: string;
+  session_at: string;
+  duration_minutes: number;
+  status: string;
+  coach_id: string;
+  coach_name: string;
+};
 
 const HomeScreen = ({ navigation }: any) => {
   const { user, logout } = useAuth();
   const [showWeightModal, setShowWeightModal] = useState(false);
   const [streak, setStreak] = useState(0);
   const [stats, setStats] = useState({
-    workouts: 0,
+    sessions: 0,
     calories: 0,
-    minutes: 0,
   });
+  const [upcomingSession, setUpcomingSession] =
+    useState<UpcomingSession | null>(null);
 
   useEffect(() => {
     if (user?.id) {
       checkDailyWeightLog();
       loadTodayStats();
       calculateStreak();
+      fetchUpcomingSession();
+      configureNotificationChannel();
     }
   }, [user?.id]);
+
+  const configureNotificationChannel = async () => {
+    if (Platform.OS !== "android") return;
+    try {
+      await Notifications.setNotificationChannelAsync("session-reminders", {
+        name: "Session Reminders",
+        importance: Notifications.AndroidImportance.HIGH,
+      });
+    } catch (error) {
+      console.error("Error configuring notification channel:", error);
+    }
+  };
+
+  const clearSessionReminder = async () => {
+    const existingNotificationId = await AsyncStorage.getItem(
+      SESSION_REMINDER_ID_KEY,
+    );
+
+    if (existingNotificationId) {
+      try {
+        await Notifications.cancelScheduledNotificationAsync(
+          existingNotificationId,
+        );
+      } catch (error) {
+        console.error("Error cancelling existing reminder:", error);
+      }
+    }
+
+    await AsyncStorage.multiRemove([
+      SESSION_REMINDER_ID_KEY,
+      SESSION_REMINDER_SESSION_KEY,
+    ]);
+  };
+
+  const ensureNotificationPermission = async () => {
+    const currentPermission = await Notifications.getPermissionsAsync();
+    if (currentPermission.granted) return true;
+
+    const requestedPermission = await Notifications.requestPermissionsAsync();
+    return requestedPermission.granted;
+  };
+
+  const syncSessionReminder = async (session: UpcomingSession) => {
+    const sessionKey = `${session.id}:${session.session_at}`;
+    const savedSessionKey = await AsyncStorage.getItem(
+      SESSION_REMINDER_SESSION_KEY,
+    );
+
+    if (savedSessionKey === sessionKey) return;
+
+    await clearSessionReminder();
+
+    const triggerDate = new Date(
+      new Date(session.session_at).getTime() - 30 * 60 * 1000,
+    );
+
+    if (triggerDate.getTime() <= Date.now()) return;
+
+    const hasPermission = await ensureNotificationPermission();
+    if (!hasPermission) return;
+
+    const notificationId = await Notifications.scheduleNotificationAsync({
+      content: {
+        title: "Session Reminder",
+        body: `${session.title} starts in 30 minutes with ${session.coach_name}.`,
+        sound: true,
+      },
+      trigger:
+        Platform.OS === "android"
+          ? {
+              channelId: "session-reminders",
+              date: triggerDate,
+            }
+          : {
+              date: triggerDate,
+            },
+    });
+
+    await AsyncStorage.multiSet([
+      [SESSION_REMINDER_ID_KEY, notificationId],
+      [SESSION_REMINDER_SESSION_KEY, sessionKey],
+    ]);
+  };
+
+  const fetchUpcomingSession = async () => {
+    try {
+      if (!user?.id) {
+        setUpcomingSession(null);
+        return;
+      }
+
+      const { data: sessions, error: sessionError } = await supabase
+        .from("coach_sessions")
+        .select("id,title,session_at,duration_minutes,status,coach_id")
+        .eq("client_id", user.id)
+        .in("status", ["scheduled", "booked", "requested"])
+        .gte("session_at", new Date().toISOString())
+        .order("session_at", { ascending: true })
+        .limit(10);
+
+      if (sessionError) throw sessionError;
+
+      const nextSession = (sessions || [])[0];
+
+      if (!nextSession) {
+        setUpcomingSession(null);
+        await clearSessionReminder();
+        return;
+      }
+
+      const { data: coachData, error: coachError } = await supabase
+        .from("users")
+        .select("name,email")
+        .eq("id", nextSession.coach_id)
+        .maybeSingle();
+
+      if (coachError) {
+        console.log("Coach profile fetch warning:", coachError.message);
+      }
+
+      const sessionWithCoach: UpcomingSession = {
+        ...nextSession,
+        coach_name: coachData?.name || coachData?.email || "Coach",
+      };
+
+      setUpcomingSession(sessionWithCoach);
+      await syncSessionReminder(sessionWithCoach);
+    } catch (error) {
+      console.error("Error fetching upcoming session:", error);
+    }
+  };
+
+  const formatSessionDateTime = (value: string) => {
+    return new Date(value).toLocaleString(undefined, {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
 
   const calculateStreak = async () => {
     try {
@@ -96,9 +263,76 @@ const HomeScreen = ({ navigation }: any) => {
 
   const loadTodayStats = async () => {
     try {
-      setStats({ workouts: 0, calories: 0, minutes: 0 });
+      if (!user?.id) {
+        setStats({ sessions: 0, calories: 0 });
+        return;
+      }
+
+      let sessionsCount = 0;
+      let caloriesCount = 0;
+
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+
+      const nextWeek = new Date(todayStart);
+      nextWeek.setDate(nextWeek.getDate() + 7);
+
+      const { data: workoutPlans, error: workoutPlansError } = await supabase
+        .from("workout_plans")
+        .select("id")
+        .eq("client_id", user.id);
+
+      if (workoutPlansError) throw workoutPlansError;
+
+      const planIds = (workoutPlans || []).map((plan) => plan.id);
+      if (planIds.length > 0) {
+        const { data: workoutDays, error: workoutDaysError } = await supabase
+          .from("workout_days")
+          .select("id")
+          .in("plan_id", planIds);
+
+        if (workoutDaysError) throw workoutDaysError;
+
+        sessionsCount = (workoutDays || []).length;
+      }
+
+      const { data: dietPlans, error: dietPlansError } = await supabase
+        .from("diet_plans")
+        .select("calories,protein,carbs,fats")
+        .eq("user_id", user.id);
+
+      if (dietPlansError) throw dietPlansError;
+
+      if ((dietPlans || []).length > 0) {
+        caloriesCount = (dietPlans || []).reduce((total, plan: any) => {
+          const protein = Number(plan.protein) || 0;
+          const carbs = Number(plan.carbs) || 0;
+          const fats = Number(plan.fats) || 0;
+          const caloriesFromMacros = protein * 4 + carbs * 4 + fats * 9;
+          const caloriesTarget = Number(plan.calories) || 0;
+          return total + Math.max(caloriesTarget, caloriesFromMacros);
+        }, 0);
+      } else {
+        const { data: directMeals, error: directMealsError } = await supabase
+          .from("diet_meals")
+          .select("calories")
+          .eq("assigned_to_client_id", user.id);
+
+        if (directMealsError) throw directMealsError;
+
+        caloriesCount = (directMeals || []).reduce(
+          (total, meal: any) => total + (Number(meal.calories) || 0),
+          0,
+        );
+      }
+
+      setStats({
+        sessions: sessionsCount,
+        calories: Math.round(caloriesCount),
+      });
     } catch (error) {
       console.error("Error loading stats:", error);
+      setStats({ sessions: 0, calories: 0 });
     }
   };
 
@@ -165,7 +399,6 @@ const HomeScreen = ({ navigation }: any) => {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {/* Premium Header */}
           <LinearGradient
             colors={["#5B7FFF", "#4A68E6"]}
             start={{ x: 0, y: 0 }}
@@ -175,7 +408,7 @@ const HomeScreen = ({ navigation }: any) => {
             <View style={styles.headerTop}>
               <View>
                 <Text style={styles.greeting}>Welcome back,</Text>
-                <Text style={styles.userName}>{user?.name}</Text>
+                <Text style={styles.userName}>{user?.name || "Athlete"}</Text>
               </View>
             </View>
             <View style={styles.headerStats}>
@@ -186,26 +419,46 @@ const HomeScreen = ({ navigation }: any) => {
             </View>
           </LinearGradient>
 
-          {/* Stats Cards */}
           <View style={styles.statsContainer}>
             <View style={[styles.statCard, styles.statCard1]}>
               <Text style={styles.statIcon}>🏋️</Text>
-              <Text style={styles.statValue}>{stats.workouts}</Text>
-              <Text style={styles.statLabel}>WORKOUTS</Text>
+              <Text style={styles.statValue}>{stats.sessions}</Text>
+              <Text style={styles.statLabel}>SESSIONS THIS WEEK</Text>
             </View>
             <View style={[styles.statCard, styles.statCard2]}>
               <Text style={styles.statIcon}>🔥</Text>
               <Text style={styles.statValue}>{stats.calories}</Text>
-              <Text style={styles.statLabel}>CALORIES</Text>
-            </View>
-            <View style={[styles.statCard, styles.statCard3]}>
-              <Text style={styles.statIcon}>⏱️</Text>
-              <Text style={styles.statValue}>{stats.minutes}</Text>
-              <Text style={styles.statLabel}>MINUTES</Text>
+              <Text style={styles.statLabel}>DAILY KCAL</Text>
             </View>
           </View>
 
-          {/* Quick Actions */}
+          <Text style={styles.sectionTitle}>Scheduled Session</Text>
+          {upcomingSession ? (
+            <View style={styles.sessionCard}>
+              <View style={styles.sessionBadge}>
+                <Text style={styles.sessionBadgeText}>UPCOMING</Text>
+              </View>
+              <Text style={styles.sessionTitle}>{upcomingSession.title}</Text>
+              <Text style={styles.sessionMeta}>
+                {formatSessionDateTime(upcomingSession.session_at)}
+              </Text>
+              <Text style={styles.sessionMeta}>
+                Coach: {upcomingSession.coach_name} • Duration:{" "}
+                {upcomingSession.duration_minutes} min
+              </Text>
+              <Text style={styles.sessionHint}>
+                You will receive a reminder 30 minutes before this session.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.sessionCardEmpty}>
+              <Text style={styles.sessionEmptyTitle}>No session scheduled</Text>
+              <Text style={styles.sessionEmptyText}>
+                Your coach will schedule your next session soon.
+              </Text>
+            </View>
+          )}
+
           <Text style={styles.sectionTitle}>Quick Actions</Text>
           <TouchableOpacity
             style={styles.quickAction}
@@ -239,27 +492,6 @@ const HomeScreen = ({ navigation }: any) => {
             <Text style={styles.quickActionArrow}>→</Text>
           </TouchableOpacity>
 
-          {/* Tips Section */}
-          <Text style={styles.sectionTitle}>Today's Tips</Text>
-          <View style={styles.tipCard}>
-            <View style={styles.tipDot} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.tipTitle}>Stay Hydrated</Text>
-              <Text style={styles.tipText}>
-                Drink 8-10 glasses of water daily
-              </Text>
-            </View>
-          </View>
-          <View style={styles.tipCard}>
-            <View style={styles.tipDot} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.tipTitle}>Track Progress</Text>
-              <Text style={styles.tipText}>
-                Log your weight to monitor changes
-              </Text>
-            </View>
-          </View>
-
           <View style={styles.spacing} />
         </ScrollView>
       </SafeAreaView>
@@ -283,7 +515,7 @@ const styles = StyleSheet.create({
   },
   headerTop: {
     flexDirection: "row",
-    justifyContent: "space-between",
+    justifyContent: "flex-start",
     alignItems: "center",
     marginBottom: 24,
   },
@@ -295,11 +527,11 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   userName: {
-    fontSize: 36,
+    fontSize: 30,
     fontWeight: "900",
     color: "#fff",
     letterSpacing: -0.8,
-    lineHeight: 42,
+    lineHeight: 34,
   },
   headerStats: {
     flexDirection: "row",
@@ -427,37 +659,70 @@ const styles = StyleSheet.create({
     color: "#5B7FFF",
     fontWeight: "800",
   },
-  tipCard: {
-    flexDirection: "row",
+  sessionCard: {
     marginHorizontal: 24,
-    marginBottom: 12,
+    marginBottom: 20,
+    paddingVertical: 18,
+    paddingHorizontal: 16,
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "rgba(91,127,255,0.35)",
+    ...shadows.card,
+  },
+  sessionBadge: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(91,127,255,0.5)",
+    backgroundColor: "rgba(91,127,255,0.15)",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    marginBottom: 10,
+  },
+  sessionBadgeText: {
+    color: "#DCE2FF",
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.4,
+  },
+  sessionTitle: {
+    color: palette.textPrimary,
+    fontSize: 16,
+    fontWeight: "800",
+    marginBottom: 6,
+  },
+  sessionMeta: {
+    color: palette.textSecondary,
+    fontSize: 13,
+    marginBottom: 4,
+    lineHeight: 18,
+  },
+  sessionHint: {
+    marginTop: 8,
+    fontSize: 12,
+    color: "#A6B3FF",
+  },
+  sessionCardEmpty: {
+    marginHorizontal: 24,
+    marginBottom: 20,
     paddingVertical: 16,
     paddingHorizontal: 16,
-    backgroundColor: "rgba(255, 184, 0, 0.1)",
-    borderRadius: 14,
-    borderLeftWidth: 4,
-    borderLeftColor: "#FFB800",
+    backgroundColor: "rgba(255,255,255,0.04)",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: palette.border,
   },
-  tipDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#FFB800",
-    marginRight: 14,
-    marginTop: 4,
-  },
-  tipTitle: {
+  sessionEmptyTitle: {
+    color: palette.textPrimary,
     fontSize: 15,
     fontWeight: "700",
-    color: palette.textPrimary,
-    marginBottom: 3,
-    letterSpacing: -0.3,
+    marginBottom: 4,
   },
-  tipText: {
+  sessionEmptyText: {
     fontSize: 13,
     color: palette.textSecondary,
     lineHeight: 18,
-    fontWeight: "500",
   },
   spacing: {
     height: 24,

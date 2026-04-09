@@ -2,7 +2,7 @@ import React, { useContext } from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createStackNavigator } from "@react-navigation/stack";
 import ClientTabNavigator from "./ClientTabNavigator";
-import AdminTabNavigator from "./AdminTabNavigator";
+import AdminNavigator from "./AdminNavigator";
 import LoginScreen from "../screens/auth/LoginScreen";
 import SignUpScreen from "../screens/auth/SignUpScreen";
 import RoleSelectionScreen from "../screens/auth/RoleSelectionScreen";
@@ -43,7 +43,7 @@ const RootNavigator = () => {
           ) : user.role === "admin" ? (
             <Stack.Screen
               name="Admin"
-              component={AdminTabNavigator}
+              component={AdminNavigator}
               options={{ headerShown: false }}
             />
           ) : (

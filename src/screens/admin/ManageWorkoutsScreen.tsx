@@ -12,6 +12,7 @@ import {
   StyleSheet,
   SafeAreaView,
 } from "react-native";
+import { useNavigation } from "@react-navigation/native";
 import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
 import { useAuth } from "../../context/AuthContext";
@@ -47,6 +48,29 @@ type WorkoutPlan = {
 
 const ManageWorkoutsScreen = () => {
   const { user } = useAuth();
+  const navigation = useNavigation();
+
+  // Permission check
+  React.useEffect(() => {
+    if (user && user.role !== "admin") {
+      console.warn(
+        "[ManageWorkoutsScreen] Unauthorized access attempt. User role:",
+        user.role,
+      );
+      Alert.alert(
+        "Unauthorized",
+        "You don't have permission to access this page.",
+        [
+          {
+            text: "Go Back",
+            onPress: () => {
+              navigation.goBack();
+            },
+          },
+        ],
+      );
+    }
+  }, [user?.role, navigation]);
 
   const [clients, setClients] = useState<Client[]>([]);
   const [plans, setPlans] = useState<WorkoutPlan[]>([]);
@@ -57,9 +81,10 @@ const ManageWorkoutsScreen = () => {
   const [showExerciseModal, setShowExerciseModal] = useState(false);
   const [showClientSelector, setShowClientSelector] = useState(false);
 
-  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [selectedPlan, setSelectedPlan] = useState<WorkoutPlan | null>(null);
   const [selectedDay, setSelectedDay] = useState<WorkoutDay | null>(null);
+  const [editingExercise, setEditingExercise] =
+    useState<WorkoutExercise | null>(null);
 
   const [planForm, setPlanForm] = useState({ title: "", notes: "" });
   const [dayForm, setDayForm] = useState({ title: "" });
@@ -225,40 +250,48 @@ const ManageWorkoutsScreen = () => {
   const uploadVideoIfNeeded = async (
     uri: string | null,
     exerciseName?: string,
-  ) => {
-    if (!uri) return null;
+  ): Promise<string | null> => {
+    if (!uri) {
+      console.log("[uploadVideo] No video URI provided");
+      return null;
+    }
+
     // If already a URL, return as is
     if (uri.startsWith("http://") || uri.startsWith("https://")) return uri;
 
     try {
-      // Upload to Bunny Stream
-      const fileName = `exercise-${Date.now()}.mp4`;
-      const title = `${exerciseName || "Exercise"} - ${new Date().toLocaleDateString()}`;
-
-      Alert.alert(
-        "Uploading Video",
-        "Please wait while video is being uploaded...",
+      console.log("[uploadVideo] Creating video object in Bunny...");
+      const videoMeta = await bunnyStream.createVideo(
+        exerciseName || "Workout Exercise Video",
       );
 
-      const result = await bunnyStream.uploadVideo(
-        title,
-        uri,
-        fileName,
-        (progress) => {
-          console.log(`Upload progress: ${progress}%`);
-        },
-      );
-
-      if (result.success && result.playUrl) {
-        Alert.alert("Success", "Video uploaded successfully!");
-        return result.playUrl;
-      } else {
-        Alert.alert("Upload Failed", "Could not upload video to Bunny Stream");
+      if (!videoMeta) {
+        console.error("[uploadVideo] Failed to create video metadata");
         return null;
       }
+
+      console.log("[uploadVideo] Video created with GUID:", videoMeta.guid);
+      console.log("[uploadVideo] Starting file upload...");
+
+      const uploadSuccess = await bunnyStream.uploadVideoFile(
+        videoMeta.guid,
+        uri,
+        exerciseName || "video",
+      );
+
+      if (!uploadSuccess) {
+        console.error("[uploadVideo] File upload failed");
+        return null;
+      }
+
+      console.log("[uploadVideo] Upload successful!");
+
+      // Return formatted embed URL
+      const embedUrl = `https://iframe.mediadelivery.net/embed/${videoMeta.videoLibraryId}/${videoMeta.guid}`;
+      console.log("[uploadVideo] Returning embed URL:", embedUrl);
+      return embedUrl;
     } catch (error) {
-      console.error("Error uploading to Bunny Stream:", error);
-      Alert.alert("Error", "Failed to upload video");
+      console.error("[uploadVideo] Unexpected error:", error);
       return null;
     }
   };
@@ -275,13 +308,12 @@ const ManageWorkoutsScreen = () => {
           title: planForm.title.trim(),
           notes: planForm.notes.trim() || null,
           coach_id: user?.id,
-          client_id: selectedClient?.id || null,
+          client_id: null,
         },
       ]);
       if (error) throw error;
       setShowPlanModal(false);
       setPlanForm({ title: "", notes: "" });
-      setSelectedClient(null);
       fetchPlans();
     } catch (error: any) {
       Alert.alert("Error", error.message || "Failed to create plan");
@@ -320,7 +352,31 @@ const ManageWorkoutsScreen = () => {
     }
   };
 
-  const createExercise = async () => {
+  const openCreateExerciseModal = (day: WorkoutDay) => {
+    setSelectedDay(day);
+    setEditingExercise(null);
+    setExerciseForm({ name: "", sets: "", reps: "", directions: "" });
+    setExerciseVideo(null);
+    setShowExerciseModal(true);
+  };
+
+  const openEditExerciseModal = (
+    day: WorkoutDay,
+    exercise: WorkoutExercise,
+  ) => {
+    setSelectedDay(day);
+    setEditingExercise(exercise);
+    setExerciseForm({
+      name: exercise.name || "",
+      sets: exercise.sets !== null ? String(exercise.sets) : "",
+      reps: exercise.reps !== null ? String(exercise.reps) : "",
+      directions: exercise.directions || "",
+    });
+    setExerciseVideo(exercise.video_url || null);
+    setShowExerciseModal(true);
+  };
+
+  const saveExercise = async () => {
     if (!selectedDay) {
       Alert.alert("Select day", "Pick a day first");
       return;
@@ -331,27 +387,74 @@ const ManageWorkoutsScreen = () => {
     }
     try {
       setLoading(true);
-      const videoUrl = await uploadVideoIfNeeded(
-        exerciseVideo,
-        exerciseForm.name.trim(),
-      );
-      const { error } = await supabase.from("workout_exercises").insert([
-        {
-          day_id: selectedDay.id,
-          name: exerciseForm.name.trim(),
-          sets: exerciseForm.sets ? parseInt(exerciseForm.sets, 10) : null,
-          reps: exerciseForm.reps ? parseInt(exerciseForm.reps, 10) : null,
-          directions: exerciseForm.directions.trim() || null,
-          video_url: videoUrl,
-        },
-      ]);
+
+      let videoUrl = null;
+
+      // If user selected a video, upload it and require success
+      if (exerciseVideo && !exerciseVideo.startsWith("http")) {
+        console.log("[saveExercise] Uploading video...");
+        videoUrl = await uploadVideoIfNeeded(
+          exerciseVideo,
+          exerciseForm.name.trim(),
+        );
+
+        if (!videoUrl) {
+          console.warn(
+            "[saveExercise] Video upload failed, saving exercise without new video",
+          );
+          if (editingExercise?.video_url) {
+            videoUrl = editingExercise.video_url;
+          } else {
+            videoUrl = null;
+          }
+
+          Alert.alert(
+            "Video Upload Failed",
+            "Exercise was saved without video. You can add the video later from Edit Exercise.",
+          );
+        }
+
+        console.log("[saveExercise] Video uploaded, saving exercise");
+      } else if (exerciseVideo) {
+        // Already a URL
+        videoUrl = exerciseVideo;
+      }
+
+      const exercisePayload = {
+        day_id: selectedDay.id,
+        name: exerciseForm.name.trim(),
+        sets: exerciseForm.sets ? parseInt(exerciseForm.sets, 10) : null,
+        reps: exerciseForm.reps ? parseInt(exerciseForm.reps, 10) : null,
+        directions: exerciseForm.directions.trim() || null,
+        video_url: videoUrl,
+      };
+
+      const { error } = editingExercise
+        ? await supabase
+            .from("workout_exercises")
+            .update(exercisePayload)
+            .eq("id", editingExercise.id)
+        : await supabase.from("workout_exercises").insert([exercisePayload]);
       if (error) throw error;
+
+      console.log("[saveExercise] Exercise saved successfully");
+
       setShowExerciseModal(false);
+      setEditingExercise(null);
       setExerciseForm({ name: "", sets: "", reps: "", directions: "" });
       setExerciseVideo(null);
       fetchPlans();
+
+      Alert.alert("Success", "Exercise added successfully");
     } catch (error: any) {
-      Alert.alert("Error", error.message || "Failed to add exercise");
+      console.error("[saveExercise] Save failed:", error);
+      Alert.alert(
+        "Error",
+        error.message ||
+          (editingExercise
+            ? "Failed to update exercise"
+            : "Failed to add exercise"),
+      );
     } finally {
       setLoading(false);
     }
@@ -400,7 +503,7 @@ const ManageWorkoutsScreen = () => {
     return byClient;
   }, [plans]);
 
-  const renderExercise = (ex: WorkoutExercise) => (
+  const renderExercise = (ex: WorkoutExercise, day: WorkoutDay) => (
     <View key={ex.id} style={styles.exerciseCard}>
       <Text style={styles.exerciseName}>{ex.name}</Text>
       <Text style={styles.exerciseMeta}>
@@ -415,6 +518,9 @@ const ManageWorkoutsScreen = () => {
         <Text style={styles.exerciseVideo}>🎥 Video attached</Text>
       ) : null}
       <View style={styles.exerciseActions}>
+        <TouchableOpacity onPress={() => openEditExerciseModal(day, ex)}>
+          <Text style={styles.editText}>Edit Exercise</Text>
+        </TouchableOpacity>
         <TouchableOpacity onPress={() => deleteExercise(ex.id)}>
           <Text style={styles.deleteText}>Delete Exercise</Text>
         </TouchableOpacity>
@@ -429,10 +535,7 @@ const ManageWorkoutsScreen = () => {
         <TouchableOpacity
           style={styles.secondaryButton}
           onPress={() => {
-            setSelectedDay(day);
-            setExerciseForm({ name: "", sets: "", reps: "", directions: "" });
-            setExerciseVideo(null);
-            setShowExerciseModal(true);
+            openCreateExerciseModal(day);
           }}
         >
           <Text style={styles.secondaryButtonText}>+ Exercise</Text>
@@ -441,7 +544,7 @@ const ManageWorkoutsScreen = () => {
       {day.exercises.length === 0 ? (
         <Text style={styles.emptyInline}>No exercises yet</Text>
       ) : (
-        day.exercises.map(renderExercise)
+        day.exercises.map((exercise) => renderExercise(exercise, day))
       )}
     </View>
   );
@@ -492,9 +595,6 @@ const ManageWorkoutsScreen = () => {
           style={styles.secondaryButton}
           onPress={() => {
             setSelectedPlan(plan);
-            setSelectedClient(
-              clients.find((c) => c.id === plan.client_id) || null,
-            );
             setShowClientSelector(true);
           }}
         >
@@ -562,7 +662,6 @@ const ManageWorkoutsScreen = () => {
           <TouchableOpacity
             style={styles.primaryButton}
             onPress={() => {
-              setSelectedClient(null);
               setPlanForm({ title: "", notes: "" });
               setShowPlanModal(true);
             }}
@@ -615,34 +714,9 @@ const ManageWorkoutsScreen = () => {
                 onChangeText={(t) => setPlanForm({ ...planForm, notes: t })}
                 multiline
               />
-              <Text style={styles.label}>Assign to Client</Text>
-              <TouchableOpacity
-                style={[
-                  styles.selectorButton,
-                  selectedClient && {
-                    backgroundColor: "rgba(124,131,255,0.15)",
-                  },
-                ]}
-                onPress={openClientSelector}
-              >
-                <Text style={styles.selectorText}>
-                  {selectedClient
-                    ? `✓ ${selectedClient.name}`
-                    : "+ Tap to assign client"}
-                </Text>
-              </TouchableOpacity>
-              {selectedClient ? (
-                <TouchableOpacity
-                  style={{ marginTop: spacing.xs }}
-                  onPress={() => setSelectedClient(null)}
-                >
-                  <Text style={styles.clearLink}>✕ Remove assignment</Text>
-                </TouchableOpacity>
-              ) : (
-                <Text style={[styles.clearLink, { marginTop: spacing.xs }]}>
-                  Leave empty to assign manually later
-                </Text>
-              )}
+              <Text style={[styles.clearLink, { marginTop: spacing.sm }]}>
+                Plan will be created as unassigned. Assign it afterwards.
+              </Text>
               <TouchableOpacity
                 style={styles.primaryButton}
                 onPress={createPlan}
@@ -688,9 +762,15 @@ const ManageWorkoutsScreen = () => {
             <View style={styles.modalCard}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>
-                  Exercise for {selectedDay?.title}
+                  {editingExercise ? "Edit Exercise" : "Exercise for"}{" "}
+                  {selectedDay?.title}
                 </Text>
-                <TouchableOpacity onPress={() => setShowExerciseModal(false)}>
+                <TouchableOpacity
+                  onPress={() => {
+                    setShowExerciseModal(false);
+                    setEditingExercise(null);
+                  }}
+                >
                   <Text style={styles.close}>✕</Text>
                 </TouchableOpacity>
               </View>
@@ -751,9 +831,11 @@ const ManageWorkoutsScreen = () => {
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.primaryButton}
-                onPress={createExercise}
+                onPress={saveExercise}
               >
-                <Text style={styles.primaryButtonText}>Add Exercise</Text>
+                <Text style={styles.primaryButtonText}>
+                  {editingExercise ? "Save Changes" : "Add Exercise"}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -780,8 +862,6 @@ const ManageWorkoutsScreen = () => {
                     onPress={() => {
                       if (selectedPlan) {
                         assignPlanToClient(selectedPlan.id, item.id);
-                      } else {
-                        setSelectedClient(item);
                       }
                       setShowClientSelector(false);
                     }}
@@ -831,7 +911,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: palette.background },
   hero: {
     padding: spacing.xl,
-    paddingTop: spacing.xxl,
+    paddingTop: 54,
     borderBottomLeftRadius: radii.xl,
     borderBottomRightRadius: radii.xl,
   },
@@ -840,6 +920,8 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: "800",
     marginBottom: 6,
+    letterSpacing: -0.5,
+    lineHeight: 34,
   },
   heroSubtitle: {
     color: "rgba(255,255,255,0.8)",
@@ -909,7 +991,13 @@ const styles = StyleSheet.create({
   exerciseMeta: { color: palette.textSecondary, marginTop: 2 },
   exerciseDirections: { color: palette.textSecondary, marginTop: 4 },
   exerciseVideo: { color: "#7C83FF", marginTop: 4, fontWeight: "600" },
-  exerciseActions: { marginTop: spacing.sm, alignItems: "flex-end" },
+  exerciseActions: {
+    marginTop: spacing.sm,
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: spacing.md,
+  },
+  editText: { color: "#1E88E5", fontWeight: "700" },
   deleteText: { color: "#D32F2F", fontWeight: "700" },
   secondaryButton: {
     borderWidth: 1,

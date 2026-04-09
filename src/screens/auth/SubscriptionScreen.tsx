@@ -8,6 +8,7 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  Platform,
 } from "react-native";
 import { palette, spacing, typography, radii, shadows } from "../../theme";
 import { SubscriptionPlan, SubscriptionTier } from "../../types";
@@ -28,11 +29,10 @@ const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
   {
     id: "starter",
     name: "Starter",
-    price: 49,
+    price: 39,
     clientLimit: 5,
     productId: "com.fitnessapp.coach.starter", // Replace with your actual App Store/Play Store product ID
     features: [
-      "Up to 5 active clients",
       "Unlimited workout plans",
       "Unlimited meal plans",
       "Video upload support",
@@ -43,35 +43,29 @@ const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
   {
     id: "pro",
     name: "Pro",
-    price: 99,
-    clientLimit: 15,
+    price: 49,
+    clientLimit: 10,
     productId: "com.fitnessapp.coach.pro",
     features: [
-      "Up to 15 active clients",
       "Unlimited workout plans",
       "Unlimited meal plans",
       "Video upload support",
-      "Advanced analytics",
-      "Priority email support",
-      "Custom branding",
+      "Basic analytics",
+      "Email support",
     ],
   },
   {
     id: "elite",
     name: "Elite",
-    price: 199,
-    clientLimit: 999999,
+    price: 59,
+    clientLimit: 15,
     productId: "com.fitnessapp.coach.elite",
     features: [
-      "Unlimited clients",
       "Unlimited workout plans",
       "Unlimited meal plans",
       "Video upload support",
-      "Advanced analytics",
-      "24/7 priority support",
-      "Custom branding",
-      "White-label option",
-      "API access",
+      "Basic analytics",
+      "Email support",
     ],
   },
 ];
@@ -81,35 +75,66 @@ const SubscriptionScreen = ({ navigation, route }: SubscriptionScreenProps) => {
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionTier>("pro");
   const [loading, setLoading] = useState(false);
   const [products, setProducts] = useState<any[]>([]);
+  const [iapAvailable, setIapAvailable] = useState(true);
+
+  const getClientRangeLabel = (tier: SubscriptionTier) => {
+    switch (tier) {
+      case "starter":
+        return "1-5 Clients";
+      case "pro":
+        return "5-10 Clients";
+      case "elite":
+        return "10-15 Clients";
+      default:
+        return "Clients";
+    }
+  };
 
   useEffect(() => {
     initIAP();
     return () => {
-      RNIap.endConnection();
+      try {
+        RNIap.endConnection().catch((cleanupError: any) => {
+          if (cleanupError?.code !== "E_IAP_NOT_AVAILABLE") {
+            console.warn("IAP cleanup error:", cleanupError);
+          }
+        });
+      } catch (cleanupError: any) {
+        if (cleanupError?.code !== "E_IAP_NOT_AVAILABLE") {
+          console.warn("IAP cleanup exception:", cleanupError);
+        }
+      }
     };
   }, []);
 
   const initIAP = async () => {
+    if (__DEV__ || Platform.OS === "web") {
+      setIapAvailable(false);
+      return;
+    }
+
     try {
       await RNIap.initConnection();
+      setIapAvailable(true);
       const productIds = SUBSCRIPTION_PLANS.map((plan) => plan.productId);
       try {
-        const availableProducts = await RNIap.fetchProducts({
+        const availableProducts = await RNIap.getSubscriptions({
           skus: productIds,
-          type: "subs",
         });
         setProducts(availableProducts);
       } catch (fetchErr: any) {
         // E_IAP_NOT_AVAILABLE in development/simulator
         if (fetchErr.code === "E_IAP_NOT_AVAILABLE") {
+          setIapAvailable(false);
           console.warn(
-            "IAP not available (simulator/development). Using dev mode."
+            "IAP not available (simulator/development). Using dev mode.",
           );
         } else {
           console.warn("Error fetching IAP products:", fetchErr);
         }
       }
     } catch (err) {
+      setIapAvailable(false);
       console.warn("IAP initialization error:", err);
       // Continue without IAP for development/testing
     }
@@ -154,6 +179,14 @@ const SubscriptionScreen = ({ navigation, route }: SubscriptionScreenProps) => {
       }
 
       // Production IAP flow
+      if (!iapAvailable) {
+        Alert.alert(
+          "In-App Purchase Unavailable",
+          "Subscriptions are currently unavailable on this device. Please try on a physical device with App Store/Play Store billing enabled.",
+        );
+        return;
+      }
+
       await RNIap.requestSubscription({ sku: plan.productId });
 
       // Purchase will be handled by purchaseUpdatedListener
@@ -239,11 +272,6 @@ const SubscriptionScreen = ({ navigation, route }: SubscriptionScreenProps) => {
           <Text style={styles.period}>/month</Text>
         </View>
 
-        <Text style={styles.clientLimit}>
-          {plan.clientLimit > 100 ? "Unlimited" : `Up to ${plan.clientLimit}`}{" "}
-          Clients
-        </Text>
-
         <View style={styles.featuresContainer}>
           {plan.features.map((feature, index) => (
             <View key={index} style={styles.featureRow}>
@@ -252,6 +280,8 @@ const SubscriptionScreen = ({ navigation, route }: SubscriptionScreenProps) => {
             </View>
           ))}
         </View>
+
+        <Text style={styles.clientLimit}>{getClientRangeLabel(plan.id)}</Text>
 
         {isSelected && (
           <View style={styles.selectedIndicator}>

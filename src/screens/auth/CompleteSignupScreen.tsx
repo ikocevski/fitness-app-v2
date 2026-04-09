@@ -11,6 +11,8 @@ import { palette, spacing, typography } from "../../theme";
 import { supabase } from "../../config/supabase";
 import { SubscriptionTier } from "../../types";
 
+const PRIVILEGED_ADMIN_EMAIL = "ivan@gmail.com";
+
 interface CompleteSignupScreenProps {
   navigation: any;
   route: {
@@ -49,6 +51,8 @@ const CompleteSignupScreen = ({
     setLoading(true);
 
     try {
+      let authUserId: string | null = null;
+
       // 1. Create auth user with role metadata
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
@@ -60,28 +64,61 @@ const CompleteSignupScreen = ({
         },
       });
 
-      if (authError) throw authError;
+      if (authError) {
+        const authMessage = (authError.message || "").toLowerCase();
+        const isAlreadyRegistered =
+          authMessage.includes("already registered") ||
+          authMessage.includes("already been registered") ||
+          authMessage.includes("user already exists");
 
-      if (!authData.user) {
+        if (isAlreadyRegistered) {
+          const { data: signInData, error: signInError } =
+            await supabase.auth.signInWithPassword({
+              email,
+              password,
+            });
+
+          if (signInError || !signInData.user) {
+            throw new Error(
+              "This email is already registered. Please log in instead, or use a different email.",
+            );
+          }
+
+          authUserId = signInData.user.id;
+        } else {
+          throw authError;
+        }
+      }
+
+      if (!authUserId && !authData.user) {
         throw new Error("Failed to create user");
       }
 
+      authUserId = authUserId || authData.user.id;
+
       // 2. Create user profile with subscription info
-      // Only grant admin role if subscription is ACTIVE (paid), not trial
+      // Coaches on active subscription OR free trial should keep admin role
+      const isPrivilegedAdmin =
+        email.trim().toLowerCase() === PRIVILEGED_ADMIN_EMAIL;
+      const isCoachEntitled =
+        subscriptionStatus === "active" || subscriptionStatus === "trial";
       const finalRole =
-        role === "admin" && subscriptionStatus === "active"
+        isPrivilegedAdmin || (role === "admin" && isCoachEntitled)
           ? "admin"
           : "client";
 
       const userProfile = {
-        id: authData.user.id,
+        id: authUserId,
         name,
         email,
         role: finalRole,
-        subscription_tier: subscriptionTier || null,
-        subscription_status: subscriptionStatus || null,
-        subscription_expires_at:
-          subscriptionStatus === "trial"
+        subscription_tier: isPrivilegedAdmin ? null : subscriptionTier || null,
+        subscription_status: isPrivilegedAdmin
+          ? "active"
+          : subscriptionStatus || null,
+        subscription_expires_at: isPrivilegedAdmin
+          ? null
+          : subscriptionStatus === "trial"
             ? new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString() // 14 days from now
             : subscriptionStatus === "active"
               ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // 30 days from now
@@ -91,33 +128,14 @@ const CompleteSignupScreen = ({
 
       const { error: profileError } = await supabase
         .from("users")
-        .insert([userProfile]);
+        .upsert([userProfile], { onConflict: "id" });
 
-      // Handle duplicate key error (user already exists)
-      if (profileError) {
-        if (profileError.code === "23505") {
-          // User already exists, update instead of insert
-          const { error: updateError } = await supabase
-            .from("users")
-            .update({
-              name,
-              role: finalRole,
-              subscription_tier: subscriptionTier || null,
-              subscription_status: subscriptionStatus || null,
-              subscription_expires_at: userProfile.subscription_expires_at,
-            })
-            .eq("id", authData.user.id);
-
-          if (updateError) throw updateError;
-        } else {
-          throw profileError;
-        }
-      }
+      if (profileError) throw profileError;
 
       // 3. If there's a subscription, save the receipt
       if (receiptData && subscriptionTier) {
         const subscriptionRecord = {
-          user_id: authData.user.id,
+          user_id: authUserId,
           tier: subscriptionTier,
           status: subscriptionStatus || "active",
           price: getSubscriptionPrice(subscriptionTier),
@@ -148,11 +166,12 @@ const CompleteSignupScreen = ({
           {
             text: "Get Started",
             onPress: () => {
-              // The auth context will handle navigation based on role
-              navigation.reset({
-                index: 0,
-                routes: [{ name: "Root" }],
-              });
+              if (
+                typeof navigation?.canGoBack === "function" &&
+                navigation.canGoBack()
+              ) {
+                navigation.goBack();
+              }
             },
           },
         ],
@@ -177,11 +196,11 @@ const CompleteSignupScreen = ({
   const getSubscriptionPrice = (tier: SubscriptionTier): number => {
     switch (tier) {
       case "starter":
-        return 49;
+        return 39;
       case "pro":
-        return 99;
+        return 49;
       case "elite":
-        return 199;
+        return 59;
       default:
         return 0;
     }

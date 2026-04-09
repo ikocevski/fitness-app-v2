@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { useAuth } from "../../context/AuthContext";
 import { supabase } from "../../config/supabase";
-import { palette, radii, spacing, typography, shadows } from "../../theme";
+import { palette, radii, spacing, shadows } from "../../theme";
 
 interface Meal {
   id: string;
@@ -19,23 +19,62 @@ interface Meal {
   protein: number;
   carbs: number;
   fats: number;
+  meal_type?: string | null;
   description?: string;
   ingredients?: string;
   image_url?: string;
 }
 
+type MealAssignment = {
+  assignment_id: string;
+  meal_type: string;
+  display_order: number;
+  meal: Meal;
+};
+
+const MEAL_SECTIONS = [
+  { key: "breakfast", label: "Breakfast", icon: "🌅" },
+  { key: "lunch", label: "Lunch", icon: "🥙" },
+  { key: "dinner", label: "Dinner", icon: "🍽️" },
+  { key: "pre-workout", label: "Pre-Workout", icon: "⚡" },
+  { key: "snack", label: "Snack", icon: "🥜" },
+  { key: "uncategorized", label: "Uncategorized", icon: "📂" },
+];
+
+const normalizeMealType = (value?: string | null) => {
+  if (!value) return "uncategorized";
+  const normalized = value
+    .toLowerCase()
+    .trim()
+    .replace(/[_\s]+/g, "-");
+  return MEAL_SECTIONS.some((section) => section.key === normalized)
+    ? normalized
+    : "uncategorized";
+};
+
 interface AssignedPlan {
   id: string;
   name: string;
-  meal_type?: string;
+  calories?: number | null;
+  protein?: number | null;
+  carbs?: number | null;
+  fats?: number | null;
+  created_by?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
+
+const getPlanTimestamp = (plan: AssignedPlan) => {
+  const raw = plan.updated_at || plan.created_at;
+  const timestamp = raw ? new Date(raw).getTime() : 0;
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
 
 const DietScreen = () => {
   const { user } = useAuth();
-  const [meals, setMeals] = useState<Meal[]>([]);
+  const [mealAssignments, setMealAssignments] = useState<MealAssignment[]>([]);
   const [assignedPlans, setAssignedPlans] = useState<AssignedPlan[]>([]);
   const [loading, setLoading] = useState(true);
-  const [expandedMealId, setExpandedMealId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchDietPlan();
@@ -45,7 +84,7 @@ const DietScreen = () => {
     try {
       console.log("[fetchDietPlan] Fetching meals for user ID:", user?.id);
       if (!user?.id) {
-        setMeals([]);
+        setMealAssignments([]);
         return;
       }
 
@@ -63,7 +102,9 @@ const DietScreen = () => {
       // Fetch assigned plan IDs
       const { data: assignedPlans, error: planError } = await supabase
         .from("diet_plans")
-        .select("id, name, meal_type")
+        .select(
+          "id, name, calories, protein, carbs, fats, created_by, created_at, updated_at",
+        )
         .eq("user_id", user.id);
 
       if (planError) {
@@ -73,21 +114,39 @@ const DietScreen = () => {
       const planRows = (assignedPlans || []) as AssignedPlan[];
       setAssignedPlans(planRows);
 
-      const planIds = planRows.map((plan) => plan.id);
+      const activePlan = [...planRows].sort(
+        (first, second) => getPlanTimestamp(second) - getPlanTimestamp(first),
+      )[0];
+
+      const planIds = activePlan ? [activePlan.id] : [];
+
+      let planAssignments: Array<{
+        diet_meal_id: string;
+        meal_type: string;
+        display_order: number;
+        diet_plan_id: string;
+      }> = [];
 
       let mealsFromPlans: Meal[] = [];
       if (planIds.length > 0) {
         const { data: planMealsRows, error: planMealsError } = await supabase
           .from("diet_plan_meals")
-          .select("diet_meal_id")
+          .select("diet_meal_id,meal_type,display_order,diet_plan_id")
           .in("diet_plan_id", planIds);
 
         if (planMealsError) {
           console.log("[fetchDietPlan] diet_plan_meals error:", planMealsError);
+        } else {
+          planAssignments = (planMealsRows || []) as Array<{
+            diet_meal_id: string;
+            meal_type: string;
+            display_order: number;
+            diet_plan_id: string;
+          }>;
         }
 
         const mealIds = Array.from(
-          new Set((planMealsRows || []).map((row) => row.diet_meal_id)),
+          new Set((planAssignments || []).map((row) => row.diet_meal_id)),
         );
 
         if (mealIds.length > 0) {
@@ -107,22 +166,52 @@ const DietScreen = () => {
         }
       }
 
-      // Combine meals from both sources
-      let allMeals: Meal[] = directMeals || [];
-      allMeals = [...allMeals, ...mealsFromPlans];
+      const mealById = new Map<string, Meal>();
+      (directMeals || []).forEach((meal) => {
+        mealById.set(meal.id, meal as Meal);
+      });
+      mealsFromPlans.forEach((meal) => {
+        mealById.set(meal.id, meal);
+      });
 
-      // Remove duplicates by meal ID
-      const uniqueMeals = Array.from(
-        new Map(allMeals.map((meal) => [meal.id, meal])).values(),
+      const mergedAssignments: MealAssignment[] = [];
+
+      (directMeals || []).forEach((meal: any) => {
+        mergedAssignments.push({
+          assignment_id: `direct:${meal.id}`,
+          meal_type: normalizeMealType(meal.meal_type),
+          display_order: 999,
+          meal,
+        });
+      });
+
+      planAssignments.forEach((assignment) => {
+        const meal = mealById.get(assignment.diet_meal_id);
+        if (!meal) return;
+        mergedAssignments.push({
+          assignment_id: `plan:${assignment.diet_plan_id}:${assignment.diet_meal_id}:${assignment.meal_type}:${assignment.display_order}`,
+          meal_type: normalizeMealType(assignment.meal_type || meal.meal_type),
+          display_order: assignment.display_order ?? 999,
+          meal,
+        });
+      });
+
+      const uniqueAssignments = Array.from(
+        new Map(
+          mergedAssignments.map((assignment) => [
+            `${assignment.assignment_id}`,
+            assignment,
+          ]),
+        ).values(),
       );
 
       console.log("[fetchDietPlan] Fetched meals:", {
         direct: directMeals?.length || 0,
         fromPlans: mealsFromPlans.length,
-        total: uniqueMeals.length,
+        total: uniqueAssignments.length,
       });
 
-      setMeals(uniqueMeals);
+      setMealAssignments(uniqueAssignments);
     } catch (error) {
       console.error("Error fetching diet meals:", error);
     } finally {
@@ -130,17 +219,36 @@ const DietScreen = () => {
     }
   };
 
-  const calculateTotalMacros = () => {
-    return meals.reduce(
-      (totals, meal) => ({
-        calories: totals.calories + (meal.calories || 0),
-        protein: totals.protein + (meal.protein || 0),
-        carbs: totals.carbs + (meal.carbs || 0),
-        fats: totals.fats + (meal.fats || 0),
-      }),
-      { calories: 0, protein: 0, carbs: 0, fats: 0 },
-    );
+  const toNumber = (value: unknown) => {
+    const numberValue = Number(value);
+    return Number.isFinite(numberValue) ? numberValue : 0;
   };
+
+  const activeAssignedPlan = [...assignedPlans].sort(
+    (first, second) => getPlanTimestamp(second) - getPlanTimestamp(first),
+  )[0];
+
+  const planTargets = (() => {
+    if (!activeAssignedPlan) {
+      return { calories: 0, protein: 0, carbs: 0, fats: 0 };
+    }
+
+    const protein = toNumber(activeAssignedPlan.protein);
+    const carbs = toNumber(activeAssignedPlan.carbs);
+    const fats = toNumber(activeAssignedPlan.fats);
+    const caloriesFromMacros = protein * 4 + carbs * 4 + fats * 9;
+    const calories = Math.max(
+      toNumber(activeAssignedPlan.calories),
+      caloriesFromMacros,
+    );
+
+    return {
+      calories,
+      protein,
+      carbs,
+      fats,
+    };
+  })();
 
   if (loading) {
     return (
@@ -158,157 +266,155 @@ const DietScreen = () => {
           <Text style={styles.subtitle}>Personalized meal plan</Text>
         </View>
 
-        {meals.length === 0 ? (
+        {mealAssignments.length === 0 ? (
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyIcon}>🥗</Text>
-            <Text style={styles.emptyTitle}>
-              {assignedPlans.length > 0
-                ? "Diet Plan Assigned"
-                : "No Diet Plan Yet"}
-            </Text>
-            <Text style={styles.emptyText}>
-              {assignedPlans.length > 0
-                ? "Your coach assigned a plan, but no meals are attached yet."
-                : "Your coach will create a personalized diet plan for you soon!"}
-            </Text>
-            {assignedPlans.length > 0 ? (
-              <View style={styles.assignedPlansBox}>
-                <Text style={styles.assignedPlansTitle}>Assigned Plans</Text>
-                {assignedPlans.map((plan) => (
-                  <Text key={plan.id} style={styles.assignedPlanItem}>
-                    • {plan.name}
-                    {plan.meal_type ? ` (${plan.meal_type})` : ""}
-                  </Text>
-                ))}
+            <View style={styles.emptyCard}>
+              <View style={styles.emptyIconBadge}>
+                <Text style={styles.emptyIcon}>🥗</Text>
               </View>
-            ) : null}
+              <Text style={styles.emptyTitle}>
+                {assignedPlans.length > 0
+                  ? "Diet Plan Assigned"
+                  : "No Diet Plan Yet"}
+              </Text>
+              <Text style={styles.emptyText}>
+                {assignedPlans.length > 0
+                  ? "Your coach assigned a plan, but no meals are attached yet."
+                  : "Your coach will create a personalized nutrition plan for you soon."}
+              </Text>
+              {assignedPlans.length > 0 ? (
+                <View style={styles.assignedPlansBox}>
+                  <Text style={styles.assignedPlansTitle}>Assigned Plans</Text>
+                  {assignedPlans.map((plan) => (
+                    <Text key={plan.id} style={styles.assignedPlanItem}>
+                      • {plan.name}
+                    </Text>
+                  ))}
+                </View>
+              ) : null}
+            </View>
           </View>
         ) : (
           <>
-            {/* Total Macros Summary */}
+            {/* Plan Target Summary */}
             <View style={styles.macrosSummary}>
-              <Text style={styles.summaryTitle}>Daily Totals</Text>
-              {(() => {
-                const totals = calculateTotalMacros();
-                return (
+              <Text style={styles.summaryTitle}>Plan Daily Targets</Text>
+              {activeAssignedPlan ? (
+                <>
+                  {assignedPlans.length > 1 && (
+                    <Text style={styles.emptyStateHint}>
+                      Multiple plans detected. Showing newest plan targets (
+                      {activeAssignedPlan.name}).
+                    </Text>
+                  )}
                   <View style={styles.totalsGrid}>
                     <View style={styles.totalCard}>
                       <Text style={styles.totalLabel}>Calories</Text>
-                      <Text style={styles.totalValue}>{totals.calories}</Text>
+                      <Text style={styles.totalValue}>
+                        {Math.round(planTargets.calories)}
+                      </Text>
                       <Text style={styles.totalUnit}>kcal</Text>
                     </View>
                     <View style={styles.totalCard}>
                       <Text style={styles.totalLabel}>Protein</Text>
-                      <Text style={styles.totalValue}>{totals.protein}</Text>
+                      <Text style={styles.totalValue}>
+                        {Math.round(planTargets.protein)}
+                      </Text>
                       <Text style={styles.totalUnit}>g</Text>
                     </View>
                     <View style={styles.totalCard}>
                       <Text style={styles.totalLabel}>Carbs</Text>
-                      <Text style={styles.totalValue}>{totals.carbs}</Text>
+                      <Text style={styles.totalValue}>
+                        {Math.round(planTargets.carbs)}
+                      </Text>
                       <Text style={styles.totalUnit}>g</Text>
                     </View>
                     <View style={styles.totalCard}>
                       <Text style={styles.totalLabel}>Fats</Text>
-                      <Text style={styles.totalValue}>{totals.fats}</Text>
+                      <Text style={styles.totalValue}>
+                        {Math.round(planTargets.fats)}
+                      </Text>
                       <Text style={styles.totalUnit}>g</Text>
                     </View>
                   </View>
-                );
-              })()}
+                </>
+              ) : (
+                <Text style={styles.emptyStateHint}>
+                  No macro targets set yet.
+                </Text>
+              )}
             </View>
 
             {/* Meals List */}
             <View style={styles.mealsContainer}>
-              <Text style={styles.mealsTitle}>Your Meals</Text>
-              {meals.map((meal) => (
-                <TouchableOpacity
-                  key={meal.id}
-                  style={styles.mealCard}
-                  onPress={() =>
-                    setExpandedMealId(
-                      expandedMealId === meal.id ? null : meal.id,
-                    )
-                  }
-                >
-                  <View style={styles.mealHeader}>
-                    <Text style={styles.mealIcon}>🍽️</Text>
-                    <View style={styles.mealInfo}>
-                      <Text style={styles.mealName}>{meal.name}</Text>
-                      {meal.description && (
-                        <Text style={styles.mealDescription} numberOfLines={1}>
-                          {meal.description}
-                        </Text>
-                      )}
+              <Text style={styles.mealsTitle}>Meals by Section</Text>
+              {MEAL_SECTIONS.map((section) => {
+                const sectionMeals = mealAssignments
+                  .filter((assignment) => assignment.meal_type === section.key)
+                  .sort(
+                    (first, second) =>
+                      first.display_order - second.display_order,
+                  );
+
+                if (sectionMeals.length === 0) return null;
+
+                return (
+                  <View key={section.key} style={styles.mealSectionCard}>
+                    <View style={styles.mealSectionHeader}>
+                      <Text style={styles.mealSectionTitle}>
+                        {section.icon} {section.label}
+                      </Text>
+                      <Text style={styles.mealSectionCount}>
+                        {sectionMeals.length}
+                      </Text>
                     </View>
-                    <View style={styles.mealCalories}>
-                      <Text style={styles.calories}>{meal.calories}</Text>
-                      <Text style={styles.caloriesUnit}>cal</Text>
-                    </View>
-                    <Text style={styles.expandIcon}>
-                      {expandedMealId === meal.id ? "▼" : "▶"}
-                    </Text>
+
+                    {sectionMeals.map((assignment) => {
+                      const meal = assignment.meal;
+                      return (
+                        <View
+                          key={assignment.assignment_id}
+                          style={styles.mealCard}
+                        >
+                          <View style={styles.mealHeader}>
+                            <Text style={styles.mealIcon}>🍽️</Text>
+                            <View style={styles.mealInfo}>
+                              <Text style={styles.mealName}>{meal.name}</Text>
+                            </View>
+                          </View>
+
+                          <View style={styles.macrosRow}>
+                            <View style={styles.macroTag}>
+                              <Text style={styles.macroTagLabel}>Cal:</Text>
+                              <Text style={styles.macroTagValue}>
+                                {meal.calories}
+                              </Text>
+                            </View>
+                            <View style={styles.macroTag}>
+                              <Text style={styles.macroTagLabel}>P:</Text>
+                              <Text style={styles.macroTagValue}>
+                                {meal.protein}g
+                              </Text>
+                            </View>
+                            <View style={styles.macroTag}>
+                              <Text style={styles.macroTagLabel}>C:</Text>
+                              <Text style={styles.macroTagValue}>
+                                {meal.carbs}g
+                              </Text>
+                            </View>
+                            <View style={styles.macroTag}>
+                              <Text style={styles.macroTagLabel}>F:</Text>
+                              <Text style={styles.macroTagValue}>
+                                {meal.fats}g
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                      );
+                    })}
                   </View>
-
-                  {/* Macros Summary Row */}
-                  <View style={styles.macrosRow}>
-                    <View style={styles.macroTag}>
-                      <Text style={styles.macroTagLabel}>P:</Text>
-                      <Text style={styles.macroTagValue}>{meal.protein}g</Text>
-                    </View>
-                    <View style={styles.macroTag}>
-                      <Text style={styles.macroTagLabel}>C:</Text>
-                      <Text style={styles.macroTagValue}>{meal.carbs}g</Text>
-                    </View>
-                    <View style={styles.macroTag}>
-                      <Text style={styles.macroTagLabel}>F:</Text>
-                      <Text style={styles.macroTagValue}>{meal.fats}g</Text>
-                    </View>
-                  </View>
-
-                  {/* Expanded Details */}
-                  {expandedMealId === meal.id && (
-                    <View style={styles.mealDetails}>
-                      <View style={styles.macrosList}>
-                        <View style={styles.macroDetailItem}>
-                          <Text style={styles.macroDetailLabel}>Protein</Text>
-                          <Text style={styles.macroDetailValue}>
-                            {meal.protein}g
-                          </Text>
-                        </View>
-                        <View style={styles.macroDetailItem}>
-                          <Text style={styles.macroDetailLabel}>Carbs</Text>
-                          <Text style={styles.macroDetailValue}>
-                            {meal.carbs}g
-                          </Text>
-                        </View>
-                        <View style={styles.macroDetailItem}>
-                          <Text style={styles.macroDetailLabel}>Fats</Text>
-                          <Text style={styles.macroDetailValue}>
-                            {meal.fats}g
-                          </Text>
-                        </View>
-                        <View style={styles.macroDetailItem}>
-                          <Text style={styles.macroDetailLabel}>Calories</Text>
-                          <Text style={styles.macroDetailValue}>
-                            {meal.calories} kcal
-                          </Text>
-                        </View>
-                      </View>
-
-                      {meal.ingredients && (
-                        <View style={styles.ingredientsSection}>
-                          <Text style={styles.ingredientsTitle}>
-                            Ingredients
-                          </Text>
-                          <Text style={styles.ingredientsText}>
-                            {meal.ingredients}
-                          </Text>
-                        </View>
-                      )}
-                    </View>
-                  )}
-                </TouchableOpacity>
-              ))}
+                );
+              })}
             </View>
           </>
         )}
@@ -349,24 +455,50 @@ const styles = StyleSheet.create({
   emptyContainer: {
     alignItems: "center",
     justifyContent: "center",
-    padding: 40,
-    marginTop: 60,
+    paddingHorizontal: 16,
+    paddingVertical: 32,
+    minHeight: 300,
+  },
+  emptyCard: {
+    width: "100%",
+    maxWidth: 430,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(91,127,255,0.25)",
+    backgroundColor: palette.surface,
+    paddingVertical: 26,
+    paddingHorizontal: 18,
+    alignItems: "center",
+    ...shadows.card,
+  },
+  emptyIconBadge: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: "rgba(91,127,255,0.14)",
+    borderWidth: 1,
+    borderColor: "rgba(91,127,255,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
   },
   emptyIcon: {
-    fontSize: 80,
-    marginBottom: 20,
+    fontSize: 34,
   },
   emptyTitle: {
     fontSize: 22,
-    fontWeight: "bold",
+    fontWeight: "800",
     color: palette.textPrimary,
-    marginBottom: 12,
+    marginBottom: 10,
+    textAlign: "center",
+    letterSpacing: -0.4,
   },
   emptyText: {
-    fontSize: 16,
+    fontSize: 15,
     color: palette.textSecondary,
     textAlign: "center",
-    lineHeight: 24,
+    lineHeight: 22,
+    maxWidth: 300,
   },
   assignedPlansBox: {
     marginTop: spacing.md,
@@ -376,6 +508,7 @@ const styles = StyleSheet.create({
     borderRadius: radii.md,
     padding: spacing.md,
     width: "100%",
+    maxWidth: 320,
   },
   assignedPlansTitle: {
     color: palette.textPrimary,
@@ -434,6 +567,10 @@ const styles = StyleSheet.create({
     color: palette.textTertiary,
     marginTop: 2,
   },
+  emptyStateHint: {
+    fontSize: 13,
+    color: palette.textSecondary,
+  },
   mealsContainer: {
     padding: 16,
   },
@@ -444,6 +581,39 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     letterSpacing: -0.5,
     lineHeight: 24,
+  },
+  mealSectionCard: {
+    marginBottom: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: "rgba(255,255,255,0.02)",
+    padding: 12,
+  },
+  mealSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 10,
+  },
+  mealSectionTitle: {
+    color: palette.textPrimary,
+    fontSize: 16,
+    fontWeight: "800",
+    letterSpacing: -0.4,
+  },
+  mealSectionCount: {
+    minWidth: 28,
+    textAlign: "center",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    color: "#DCE2FF",
+    backgroundColor: "rgba(91,127,255,0.25)",
+    borderWidth: 1,
+    borderColor: "rgba(91,127,255,0.4)",
+    fontSize: 12,
+    fontWeight: "700",
   },
   mealCard: {
     backgroundColor: palette.surface,

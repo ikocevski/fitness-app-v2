@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -7,7 +7,9 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  SafeAreaView,
 } from "react-native";
+import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { palette, spacing, typography, radii, shadows } from "../../theme";
 import { supabase } from "../../config/supabase";
 import { useAuth } from "../../context/AuthContext";
@@ -24,18 +26,43 @@ interface SubscriptionData {
 
 const SubscriptionManagementScreen = ({ navigation }: any) => {
   const { user } = useAuth();
+  const screenNavigation = useNavigation();
+
+  // Permission check
+  React.useEffect(() => {
+    if (user && user.role !== "admin") {
+      console.warn(
+        "[SubscriptionManagementScreen] Unauthorized access attempt. User role:",
+        user.role,
+      );
+      Alert.alert(
+        "Unauthorized",
+        "You don't have permission to access this page.",
+        [
+          {
+            text: "Go Back",
+            onPress: () => {
+              screenNavigation.goBack();
+            },
+          },
+        ],
+      );
+    }
+  }, [user?.role, screenNavigation]);
+
   const [subscription, setSubscription] = useState<SubscriptionData | null>(
     null,
   );
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchSubscriptionData();
-  }, []);
-
-  const fetchSubscriptionData = async () => {
+  const fetchSubscriptionData = useCallback(async () => {
     try {
       setLoading(true);
+
+      if (!user?.id) {
+        setSubscription(null);
+        return;
+      }
 
       // Get user's subscription info
       const { data: userData, error: userError } = await supabase
@@ -43,26 +70,41 @@ const SubscriptionManagementScreen = ({ navigation }: any) => {
         .select(
           "subscription_tier, subscription_status, subscription_expires_at, client_limit",
         )
-        .eq("id", user?.id)
+        .eq("id", user.id)
         .single();
 
       if (userError) throw userError;
 
       // Get client count
       const { count: clientCount, error: countError } = await supabase
-        .from("users")
-        .select("*", { count: "exact", head: true })
-        .eq("role", "client")
-        .or(`coach_id.eq.${user?.id}`); // Adjust based on your schema
+        .from("coach_clients")
+        .select("client_id", { count: "exact", head: true })
+        .eq("coach_id", user.id);
 
-      if (countError) console.warn("Error counting clients:", countError);
+      if (countError) {
+        console.warn(
+          "Error counting clients:",
+          countError.message || countError,
+        );
+      }
+
+      const normalizedStatus = (
+        userData.subscription_status || ""
+      ).toLowerCase();
+      const trialDefaultClientLimit = 5;
+      const derivedClientLimit =
+        userData.client_limit && userData.client_limit > 0
+          ? userData.client_limit
+          : normalizedStatus === "trial"
+            ? trialDefaultClientLimit
+            : 0;
 
       setSubscription({
         tier: userData.subscription_tier,
         status: userData.subscription_status || "none",
         expiresAt: userData.subscription_expires_at,
         clientCount: clientCount || 0,
-        clientLimit: userData.client_limit || 0,
+        clientLimit: derivedClientLimit,
       });
     } catch (error) {
       console.error("Error fetching subscription:", error);
@@ -70,7 +112,17 @@ const SubscriptionManagementScreen = ({ navigation }: any) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user?.id]);
+
+  useEffect(() => {
+    fetchSubscriptionData();
+  }, [fetchSubscriptionData]);
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchSubscriptionData();
+    }, [fetchSubscriptionData]),
+  );
 
   const handleUpgrade = () => {
     Alert.alert("Upgrade Subscription", "Choose your new plan", [
@@ -79,11 +131,11 @@ const SubscriptionManagementScreen = ({ navigation }: any) => {
         style: "cancel",
       },
       {
-        text: "Pro ($99/mo)",
+        text: "Pro ($49/mo)",
         onPress: () => upgradeTo("pro"),
       },
       {
-        text: "Elite ($199/mo)",
+        text: "Elite ($59/mo)",
         onPress: () => upgradeTo("elite"),
       },
     ]);
@@ -191,22 +243,22 @@ const SubscriptionManagementScreen = ({ navigation }: any) => {
       case "starter":
         return {
           name: "Starter",
-          price: "$49/mo",
+          price: "$39/mo",
           limit: 5,
           color: palette.primary,
         };
       case "pro":
         return {
           name: "Pro",
-          price: "$99/mo",
-          limit: 15,
+          price: "$49/mo",
+          limit: 10,
           color: palette.success,
         };
       case "elite":
         return {
           name: "Elite",
-          price: "$199/mo",
-          limit: "Unlimited",
+          price: "$59/mo",
+          limit: 15,
           color: "#FFD700",
         };
       default:
@@ -235,23 +287,40 @@ const SubscriptionManagementScreen = ({ navigation }: any) => {
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
+      <SafeAreaView style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={palette.primary} />
-      </View>
+      </SafeAreaView>
     );
   }
 
   if (!subscription) {
     return (
-      <View style={styles.container}>
+      <SafeAreaView style={styles.container}>
         <Text style={styles.errorText}>No subscription data available</Text>
-      </View>
+      </SafeAreaView>
     );
   }
 
   const tierInfo = getTierInfo(subscription.tier);
+  const effectiveClientLimit =
+    subscription.clientLimit > 0
+      ? subscription.clientLimit
+      : typeof tierInfo.limit === "number"
+        ? tierInfo.limit
+        : 0;
+  const planTitle =
+    subscription.status === "trial" && !subscription.tier
+      ? "Free Trial"
+      : tierInfo.name === "No Plan"
+        ? "No Plan"
+        : `${tierInfo.name} Plan`;
+  const planPrice =
+    subscription.status === "trial" && !subscription.tier
+      ? "$0 for 14 days"
+      : tierInfo.price;
   const isNearLimit =
-    subscription.clientCount >= subscription.clientLimit * 0.8;
+    effectiveClientLimit > 0 &&
+    subscription.clientCount >= effectiveClientLimit * 0.8;
   const daysUntilExpiry = subscription.expiresAt
     ? Math.ceil(
         (new Date(subscription.expiresAt).getTime() - Date.now()) /
@@ -260,126 +329,130 @@ const SubscriptionManagementScreen = ({ navigation }: any) => {
     : null;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Subscription Management</Text>
+    <SafeAreaView style={styles.container}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        <Text style={styles.title}>Subscription Management</Text>
 
-      {/* Current Plan Card */}
-      <View style={[styles.card, { borderColor: tierInfo.color }]}>
-        <View style={styles.cardHeader}>
-          <View>
-            <Text style={styles.planName}>{tierInfo.name} Plan</Text>
-            <Text style={styles.planPrice}>{tierInfo.price}</Text>
-          </View>
-          <View
-            style={[
-              styles.statusBadge,
-              { backgroundColor: getStatusColor(subscription.status) },
-            ]}
-          >
-            <Text style={styles.statusText}>
-              {subscription.status.toUpperCase()}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.divider} />
-
-        {/* Client Usage */}
-        <View style={styles.usageSection}>
-          <Text style={styles.usageTitle}>Client Usage</Text>
-          <Text style={[styles.usageText, isNearLimit && styles.usageWarning]}>
-            {subscription.clientCount} /{" "}
-            {typeof tierInfo.limit === "number" ? tierInfo.limit : "∞"} clients
-          </Text>
-          <View style={styles.progressBar}>
+        {/* Current Plan Card */}
+        <View style={[styles.card, { borderColor: tierInfo.color }]}>
+          <View style={styles.cardHeader}>
+            <View>
+              <Text style={styles.planName}>{planTitle}</Text>
+              <Text style={styles.planPrice}>{planPrice}</Text>
+            </View>
             <View
               style={[
-                styles.progressFill,
-                {
-                  width: `${Math.min((subscription.clientCount / subscription.clientLimit) * 100, 100)}%`,
-                  backgroundColor: isNearLimit
-                    ? palette.danger
-                    : palette.success,
-                },
+                styles.statusBadge,
+                { backgroundColor: getStatusColor(subscription.status) },
               ]}
-            />
+            >
+              <Text style={styles.statusText}>
+                {subscription.status.toUpperCase()}
+              </Text>
+            </View>
           </View>
-          {isNearLimit && (
-            <Text style={styles.warningText}>
-              ⚠️ You're approaching your client limit. Consider upgrading.
+
+          <View style={styles.divider} />
+
+          {/* Client Usage */}
+          <View style={styles.usageSection}>
+            <Text style={styles.usageTitle}>Client Usage</Text>
+            <Text
+              style={[styles.usageText, isNearLimit && styles.usageWarning]}
+            >
+              {subscription.clientCount} /{" "}
+              {effectiveClientLimit > 0 ? effectiveClientLimit : "∞"} clients
             </Text>
+            <View style={styles.progressBar}>
+              <View
+                style={[
+                  styles.progressFill,
+                  {
+                    width:
+                      effectiveClientLimit > 0
+                        ? `${Math.min((subscription.clientCount / effectiveClientLimit) * 100, 100)}%`
+                        : "0%",
+                    backgroundColor: isNearLimit
+                      ? palette.danger
+                      : palette.success,
+                  },
+                ]}
+              />
+            </View>
+            {isNearLimit && (
+              <Text style={styles.warningText}>
+                ⚠️ You're approaching your client limit. Consider upgrading.
+              </Text>
+            )}
+          </View>
+
+          {/* Expiry Date */}
+          {daysUntilExpiry !== null && (
+            <View style={styles.expirySection}>
+              <Text style={styles.expiryLabel}>
+                {subscription.status === "trial" ? "Trial ends" : "Renews"} in:
+              </Text>
+              <Text style={styles.expiryValue}>{daysUntilExpiry} days</Text>
+            </View>
           )}
         </View>
 
-        {/* Expiry Date */}
-        {daysUntilExpiry !== null && (
-          <View style={styles.expirySection}>
-            <Text style={styles.expiryLabel}>
-              {subscription.status === "trial" ? "Trial ends" : "Renews"} in:
-            </Text>
-            <Text style={styles.expiryValue}>{daysUntilExpiry} days</Text>
+        {/* Features */}
+        <View style={styles.featuresCard}>
+          <Text style={styles.featuresTitle}>Your Plan Includes:</Text>
+          <View style={styles.featuresList}>
+            <Text style={styles.feature}>✓ Unlimited workout plans</Text>
+            <Text style={styles.feature}>✓ Unlimited meal plans</Text>
+            <Text style={styles.feature}>✓ Video upload support</Text>
+            <Text style={styles.feature}>✓ Basic analytics</Text>
+            <Text style={styles.feature}>✓ Email support</Text>
+            <Text style={styles.feature}>✓ {effectiveClientLimit} clients</Text>
           </View>
-        )}
-      </View>
-
-      {/* Features */}
-      <View style={styles.featuresCard}>
-        <Text style={styles.featuresTitle}>Your Plan Includes:</Text>
-        <View style={styles.featuresList}>
-          <Text style={styles.feature}>✓ {tierInfo.limit} clients</Text>
-          <Text style={styles.feature}>✓ Unlimited workout plans</Text>
-          <Text style={styles.feature}>✓ Unlimited meal plans</Text>
-          <Text style={styles.feature}>✓ Video upload support</Text>
-          {subscription.tier === "pro" || subscription.tier === "elite" ? (
-            <Text style={styles.feature}>✓ Advanced analytics</Text>
-          ) : null}
-          {subscription.tier === "elite" ? (
-            <>
-              <Text style={styles.feature}>✓ Custom branding</Text>
-              <Text style={styles.feature}>✓ API access</Text>
-            </>
-          ) : null}
         </View>
-      </View>
 
-      {/* Action Buttons */}
-      <View style={styles.buttonsContainer}>
-        {subscription.tier !== "elite" &&
-          subscription.status !== "canceled" && (
+        {/* Action Buttons */}
+        <View style={styles.buttonsContainer}>
+          {subscription.tier !== "elite" &&
+            subscription.status !== "canceled" && (
+              <TouchableOpacity
+                style={styles.upgradeButton}
+                onPress={handleUpgrade}
+              >
+                <Text style={styles.upgradeButtonText}>⬆️ Upgrade Plan</Text>
+              </TouchableOpacity>
+            )}
+
+          {subscription.status === "active" && (
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={handleCancelSubscription}
+            >
+              <Text style={styles.cancelButtonText}>Cancel Subscription</Text>
+            </TouchableOpacity>
+          )}
+
+          {subscription.status === "trial" && (
             <TouchableOpacity
               style={styles.upgradeButton}
               onPress={handleUpgrade}
             >
-              <Text style={styles.upgradeButtonText}>⬆️ Upgrade Plan</Text>
+              <Text style={styles.upgradeButtonText}>Subscribe Now</Text>
             </TouchableOpacity>
           )}
+        </View>
 
-        {subscription.status === "active" && (
-          <TouchableOpacity
-            style={styles.cancelButton}
-            onPress={handleCancelSubscription}
-          >
-            <Text style={styles.cancelButtonText}>Cancel Subscription</Text>
-          </TouchableOpacity>
-        )}
-
-        {subscription.status === "trial" && (
-          <TouchableOpacity
-            style={styles.upgradeButton}
-            onPress={handleUpgrade}
-          >
-            <Text style={styles.upgradeButtonText}>Subscribe Now</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
-      <TouchableOpacity
-        onPress={() => navigation.goBack()}
-        style={styles.backButton}
-      >
-        <Text style={styles.backButtonText}>← Back to Dashboard</Text>
-      </TouchableOpacity>
-    </ScrollView>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backButton}
+        >
+          <Text style={styles.backButtonText}>← Back to Dashboard</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    </SafeAreaView>
   );
 };
 

@@ -1,6 +1,7 @@
 import React from "react";
-import { Text, StyleSheet, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import { Ionicons } from "@expo/vector-icons";
 
 // Client Screens
 import HomeScreen from "../screens/client/HomeScreen";
@@ -25,20 +26,15 @@ const ClientTabNavigator = () => {
         headerShown: false,
         tabBarActiveTintColor: "#5B7FFF",
         tabBarInactiveTintColor: "#6E7681",
+        tabBarShowLabel: false,
         tabBarHideOnKeyboard: true,
         tabBarStyle: {
           backgroundColor: "#1C2128",
           borderTopColor: "#30363D",
           borderTopWidth: 1,
-          paddingBottom: 12,
-          paddingTop: 12,
-          height: 70,
-        },
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: "700",
-          marginTop: 6,
-          letterSpacing: 0.3,
+          paddingBottom: 10,
+          paddingTop: 10,
+          height: 64,
         },
         tabBarIconStyle: {
           marginBottom: 0,
@@ -49,9 +45,12 @@ const ClientTabNavigator = () => {
         name="Home"
         component={HomeScreen}
         options={{
-          tabBarLabel: "Home",
-          tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 26, color }}>🏠</Text>
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "home" : "home-outline"}
+              size={24}
+              color={color}
+            />
           ),
         }}
       />
@@ -59,9 +58,12 @@ const ClientTabNavigator = () => {
         name="Workout"
         component={WorkoutScreen}
         options={{
-          tabBarLabel: "Workouts",
-          tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 26, color }}>💪</Text>
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "barbell" : "barbell-outline"}
+              size={24}
+              color={color}
+            />
           ),
         }}
       />
@@ -69,9 +71,12 @@ const ClientTabNavigator = () => {
         name="Diet"
         component={DietScreen}
         options={{
-          tabBarLabel: "Diet",
-          tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 26, color }}>🥗</Text>
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "restaurant" : "restaurant-outline"}
+              size={24}
+              color={color}
+            />
           ),
         }}
       />
@@ -79,9 +84,12 @@ const ClientTabNavigator = () => {
         name="Profile"
         component={ProfileScreen}
         options={{
-          tabBarLabel: "Profile",
-          tabBarIcon: ({ color }) => (
-            <Text style={{ fontSize: 26, color }}>👤</Text>
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "person" : "person-outline"}
+              size={24}
+              color={color}
+            />
           ),
         }}
       />
