@@ -1,26 +1,35 @@
 {
   "expo": {
-    "name": "fitness-app-v2",
-    "slug": "fitness-app-v2",
+    "name": "CubeFit",
+    "slug": "cubefit",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
-    "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+    "icon": "./assets/1.png",
+    "extra": {
+      "EXPO_PUBLIC_SUPABASE_URL": "https://pyppumhjfcgxxuurytzb.supabase.co",
+      "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InB5cHB1bWhqZmNneHh1dXJ5dHpiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc0MzYyMTQsImV4cCI6MjA4MzAxMjIxNH0.Hc0_hz84PsNATVC5B0CAwv-PQtq0oCneY0kXGWfD198",
+      "EXPO_PUBLIC_BUNNY_LIBRARY_ID": "607669",
+      "EXPO_PUBLIC_BUNNY_API_KEY": "63b8ae49-f2c4-4497-a2832b414c4d-bd92-4a16"
     },
-    "assetBundlePatterns": [
-      "**/*"
-    ],
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+    "assetBundlePatterns": ["**/*"],
+    "splash": {
+      "image": "./assets/1.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0F1117"
+    },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.fitnessapp",
+      "deploymentTarget": "15.0"
     },
     "android": {
+      "package": "com.anonymous.fitnessapp",
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "foregroundImage": "./assets/1.png",
+        "backgroundColor": "#0F1117"
       }
     },
     "web": {
