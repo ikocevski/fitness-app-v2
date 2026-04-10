@@ -15,6 +15,7 @@ import { supabase } from "../../config/supabase";
 import { palette, radii, spacing, typography, shadows } from "../../theme";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import WeightModal from "../../components/common/WeightModal";
+import { deleteCurrentAccount } from "../../services/accountDeletion";
 
 interface WeightLog {
   id: string;
@@ -31,6 +32,7 @@ const ProfileScreen = () => {
   const [loadingWeights, setLoadingWeights] = useState(true);
   const [unit, setUnit] = useState<"kg" | "lbs">("kg");
   const [showWeightModal, setShowWeightModal] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -128,6 +130,51 @@ const ProfileScreen = () => {
         },
       },
     ]);
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      "Delete Account",
+      "This will permanently delete your account and all associated data, including workouts, diet plans, weight logs, and subscription records. This cannot be undone.",
+      [
+        {
+          text: "Cancel",
+          style: "cancel",
+        },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            setDeletingAccount(true);
+
+            try {
+              await deleteCurrentAccount();
+
+              // Best-effort sign out after account deletion.
+              try {
+                await logout();
+              } catch (logoutError) {
+                console.warn("Logout after account deletion failed:", logoutError);
+              }
+
+              Alert.alert(
+                "Account Deleted",
+                "Your account and data have been deleted successfully.",
+              );
+            } catch (error: any) {
+              console.error("Delete account error:", error);
+              Alert.alert(
+                "Delete Failed",
+                error?.message ||
+                  "Unable to delete your account right now. Please try again.",
+              );
+            } finally {
+              setDeletingAccount(false);
+            }
+          },
+        },
+      ],
+    );
   };
 
   const latestLog = weightLogs[0] || null;
@@ -236,6 +283,21 @@ const ProfileScreen = () => {
                 <Text style={styles.logoutIcon}>→</Text>
                 <Text style={styles.logoutText}>Logout</Text>
               </>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.deleteAccountButton,
+              deletingAccount && styles.deleteAccountButtonDisabled,
+            ]}
+            onPress={handleDeleteAccount}
+            disabled={deletingAccount}
+          >
+            {deletingAccount ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.deleteAccountText}>Delete Account</Text>
             )}
           </TouchableOpacity>
 
@@ -775,6 +837,24 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
   },
   logoutText: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+  deleteAccountButton: {
+    marginHorizontal: spacing.lg,
+    marginTop: spacing.md,
+    backgroundColor: "#D13B3B",
+    borderRadius: radii.md,
+    padding: spacing.md,
+    alignItems: "center",
+    justifyContent: "center",
+    ...shadows.button,
+  },
+  deleteAccountButtonDisabled: {
+    opacity: 0.6,
+  },
+  deleteAccountText: {
     fontSize: 16,
     fontWeight: "700",
     color: "#FFFFFF",
