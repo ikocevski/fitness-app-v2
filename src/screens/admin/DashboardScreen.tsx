@@ -9,6 +9,7 @@ import {
   TextInput,
   Alert,
   Modal,
+  ActivityIndicator,
   Platform,
 } from "react-native";
 import DateTimePicker, {
@@ -19,6 +20,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useAuth } from "../../context/AuthContext";
 import { supabase } from "../../config/supabase";
 import { palette, radii, spacing, shadows } from "../../theme";
+import { deleteCurrentAccount } from "../../services/accountDeletion";
 
 type DashboardStats = {
   totalClients: number;
@@ -90,6 +92,7 @@ const AdminDashboardScreen = ({ navigation }: any) => {
   const [schedulerEnabled, setSchedulerEnabled] = useState(true);
   const [showSchedulerModal, setShowSchedulerModal] = useState(false);
   const [showUpcomingModal, setShowUpcomingModal] = useState(false);
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   const fetchDashboardData = useCallback(async () => {
     if (!user?.id) return;
@@ -339,6 +342,46 @@ const AdminDashboardScreen = ({ navigation }: any) => {
     await logout();
   };
 
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      "Delete Account",
+      "This will permanently delete your coach account and all associated clients, workouts, diet plans, weight logs, sessions, and subscription data. This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            setDeletingAccount(true);
+            try {
+              await deleteCurrentAccount();
+
+              try {
+                await logout();
+              } catch (logoutError) {
+                console.warn("Logout after account deletion failed:", logoutError);
+              }
+
+              Alert.alert(
+                "Account Deleted",
+                "Your coach account has been deleted successfully.",
+              );
+            } catch (error: any) {
+              console.error("Delete account error:", error);
+              Alert.alert(
+                "Delete Failed",
+                error?.message ||
+                  "Unable to delete your account right now. Please try again.",
+              );
+            } finally {
+              setDeletingAccount(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const selectedClientName =
     clients.find((item) => item.id === selectedClientId)?.name ||
     "selected client";
@@ -353,7 +396,7 @@ const AdminDashboardScreen = ({ navigation }: any) => {
           style={styles.header}
         >
           <View style={styles.headerContent}>
-            <View>
+            <View style={styles.headerCopy}>
               <Text style={styles.welcomeText}>Coach Dashboard</Text>
               <Text style={styles.subtitle}>Welcome back, {user?.name}</Text>
             </View>
@@ -364,6 +407,21 @@ const AdminDashboardScreen = ({ navigation }: any) => {
               <Text style={styles.logoutText}>→</Text>
             </TouchableOpacity>
           </View>
+
+          <TouchableOpacity
+            style={[
+              styles.deleteAccountButton,
+              deletingAccount && styles.deleteAccountButtonDisabled,
+            ]}
+            onPress={handleDeleteAccount}
+            disabled={deletingAccount}
+          >
+            {deletingAccount ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.deleteAccountText}>Delete Account</Text>
+            )}
+          </TouchableOpacity>
         </LinearGradient>
 
         <View style={styles.statsContainer}>
@@ -715,6 +773,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
   },
+  headerCopy: {
+    flex: 1,
+    paddingRight: spacing.md,
+  },
   welcomeText: {
     fontSize: 28,
     fontWeight: "800",
@@ -739,6 +801,23 @@ const styles = StyleSheet.create({
   logoutText: {
     fontSize: 20,
     color: "#FFFFFF",
+  },
+  deleteAccountButton: {
+    marginTop: spacing.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.35)",
+    backgroundColor: "rgba(255, 59, 48, 0.25)",
+    paddingVertical: spacing.md,
+    alignItems: "center",
+  },
+  deleteAccountButtonDisabled: {
+    opacity: 0.6,
+  },
+  deleteAccountText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "700",
   },
   statsContainer: {
     flexDirection: "row",

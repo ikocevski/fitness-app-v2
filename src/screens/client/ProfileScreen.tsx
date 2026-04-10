@@ -154,7 +154,10 @@ const ProfileScreen = () => {
               try {
                 await logout();
               } catch (logoutError) {
-                console.warn("Logout after account deletion failed:", logoutError);
+                console.warn(
+                  "Logout after account deletion failed:",
+                  logoutError,
+                );
               }
 
               Alert.alert(

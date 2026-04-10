@@ -3,7 +3,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type",
 };
 
 const jsonResponse = (body: Record<string, unknown>, status = 200) =>
@@ -69,7 +70,8 @@ Deno.serve(async (req: Request) => {
       },
     });
 
-    const { data: userData, error: userError } = await authClient.auth.getUser();
+    const { data: userData, error: userError } =
+      await authClient.auth.getUser();
     if (userError || !userData.user) {
       return jsonResponse({ error: "Unauthorized" }, 401);
     }
@@ -83,7 +85,11 @@ Deno.serve(async (req: Request) => {
     });
 
     // 1) Remove direct links and user-owned rows.
-    await deleteWhere(adminClient, "session_notifications", `user_id.eq.${userId}`);
+    await deleteWhere(
+      adminClient,
+      "session_notifications",
+      `user_id.eq.${userId}`,
+    );
     await deleteWhere(
       adminClient,
       "coach_sessions",
@@ -147,7 +153,12 @@ Deno.serve(async (req: Request) => {
 
     const dietPlanIds = getIds(dietPlans);
     if (dietPlanIds.length > 0) {
-      await deleteIn(adminClient, "diet_plan_meals", "diet_plan_id", dietPlanIds);
+      await deleteIn(
+        adminClient,
+        "diet_plan_meals",
+        "diet_plan_id",
+        dietPlanIds,
+      );
     }
 
     await deleteWhere(
@@ -164,7 +175,8 @@ Deno.serve(async (req: Request) => {
     // 4) Remove the profile row and delete the auth user.
     await deleteWhere(adminClient, "users", `id.eq.${userId}`);
 
-    const { error: authDeleteError } = await adminClient.auth.admin.deleteUser(userId);
+    const { error: authDeleteError } =
+      await adminClient.auth.admin.deleteUser(userId);
 
     if (authDeleteError) {
       throw new Error(`Failed deleting auth user: ${authDeleteError.message}`);
