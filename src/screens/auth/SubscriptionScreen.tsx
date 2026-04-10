@@ -29,7 +29,7 @@ const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
   {
     id: "starter",
     name: "Starter",
-    price: 39,
+    price: 39.99,
     clientLimit: 5,
     productId: "com.fitnessapp.coach.starter", // Replace with your actual App Store/Play Store product ID
     features: [
@@ -43,7 +43,7 @@ const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
   {
     id: "pro",
     name: "Pro",
-    price: 49,
+    price: 49.99,
     clientLimit: 10,
     productId: "com.fitnessapp.coach.pro",
     features: [
@@ -57,7 +57,7 @@ const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
   {
     id: "elite",
     name: "Elite",
-    price: 59,
+    price: 59.99,
     clientLimit: 15,
     productId: "com.fitnessapp.coach.elite",
     features: [
@@ -88,6 +88,18 @@ const SubscriptionScreen = ({ navigation, route }: SubscriptionScreenProps) => {
       default:
         return "Clients";
     }
+  };
+
+  const getPlanPriceLabel = (plan: SubscriptionPlan) => {
+    const storeProduct = products.find(
+      (product) => product.productId === plan.productId,
+    );
+
+    if (storeProduct?.localizedPrice) {
+      return `${storeProduct.localizedPrice}/month`;
+    }
+
+    return `$${plan.price.toFixed(2)}/month`;
   };
 
   useEffect(() => {
@@ -329,9 +341,7 @@ const SubscriptionScreen = ({ navigation, route }: SubscriptionScreenProps) => {
 
         <Text style={styles.planName}>{plan.name}</Text>
         <View style={styles.priceContainer}>
-          <Text style={styles.currency}>$</Text>
-          <Text style={styles.price}>{plan.price}</Text>
-          <Text style={styles.period}>/month</Text>
+          <Text style={styles.localizedPrice}>{getPlanPriceLabel(plan)}</Text>
         </View>
 
         <View style={styles.featuresContainer}>
@@ -473,27 +483,14 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   priceContainer: {
-    flexDirection: "row",
-    alignItems: "flex-start",
     justifyContent: "center",
     marginBottom: spacing.xs,
   },
-  currency: {
-    fontSize: 24,
-    fontWeight: "700",
-    color: palette.textPrimary,
-    marginTop: 8,
-  },
-  price: {
-    fontSize: 48,
+  localizedPrice: {
+    fontSize: 42,
     fontWeight: "800",
     color: palette.textPrimary,
-    lineHeight: 56,
-  },
-  period: {
-    fontSize: 16,
-    color: palette.textSecondary,
-    marginTop: 32,
+    lineHeight: 50,
   },
   clientLimit: {
     ...typography.body,
