@@ -149,6 +149,17 @@ const SubscriptionScreen = ({ navigation, route }: SubscriptionScreenProps) => {
     const plan = SUBSCRIPTION_PLANS.find((p) => p.id === selectedPlan);
     if (!plan) return;
 
+    const startFreeTrial = () => {
+      navigation.navigate("CompleteSignup", {
+        email,
+        password,
+        name,
+        role: "admin",
+        subscriptionTier: null,
+        subscriptionStatus: "trial",
+      });
+    };
+
     setLoading(true);
 
     try {
@@ -182,12 +193,44 @@ const SubscriptionScreen = ({ navigation, route }: SubscriptionScreenProps) => {
       if (!iapAvailable) {
         Alert.alert(
           "In-App Purchase Unavailable",
-          "Subscriptions are currently unavailable on this device. Please try on a physical device with App Store/Play Store billing enabled.",
+          "Subscriptions are currently unavailable on this device. You can start a free trial now and subscribe later.",
+          [
+            {
+              text: "Start Free Trial",
+              onPress: startFreeTrial,
+            },
+            {
+              text: "Cancel",
+              style: "cancel",
+            },
+          ],
         );
         return;
       }
 
-      await RNIap.requestSubscription({ sku: plan.productId });
+      const selectedProduct = products.find(
+        (product) => product.productId === plan.productId,
+      );
+
+      if (!selectedProduct) {
+        Alert.alert(
+          "Subscription Not Available",
+          "This subscription product is not currently available in App Store Connect. You can start a free trial now and subscribe later.",
+          [
+            {
+              text: "Start Free Trial",
+              onPress: startFreeTrial,
+            },
+            {
+              text: "Try Again",
+              onPress: initIAP,
+            },
+          ],
+        );
+        return;
+      }
+
+      await RNIap.requestSubscription({ sku: selectedProduct.productId });
 
       // Purchase will be handled by purchaseUpdatedListener
       Alert.alert("Success", "Subscription started!", [
@@ -210,7 +253,26 @@ const SubscriptionScreen = ({ navigation, route }: SubscriptionScreenProps) => {
       if (err.code !== "E_USER_CANCELLED") {
         Alert.alert(
           "Purchase Failed",
-          "Unable to complete purchase. Please try again.",
+          "Unable to complete purchase right now. You can start a free trial and subscribe later.",
+          [
+            {
+              text: "Start Free Trial",
+              onPress: () => {
+                navigation.navigate("CompleteSignup", {
+                  email,
+                  password,
+                  name,
+                  role: "admin",
+                  subscriptionTier: null,
+                  subscriptionStatus: "trial",
+                });
+              },
+            },
+            {
+              text: "Try Again",
+              style: "cancel",
+            },
+          ],
         );
       }
     } finally {
