@@ -30,17 +30,39 @@ export const deleteCurrentAccount = async (): Promise<void> => {
     throw new Error("No active session found.");
   }
 
-  const { data: refreshedData, error: refreshError } =
-    await withTimeout(
+  let activeSession = session;
+  try {
+    const { data: refreshedData, error: refreshError } = await withTimeout(
       supabase.auth.refreshSession(),
-      "Session refresh timed out. Please try again.",
+      "Session refresh timed out.",
     );
 
-  if (refreshError) {
-    throw new Error("Session expired. Please log in again and retry.");
-  }
+    if (refreshError) {
+      const refreshMessage =
+        (refreshError as any)?.message?.toLowerCase?.() || "";
+      if (
+        refreshMessage.includes("expired") ||
+        refreshMessage.includes("invalid") ||
+        refreshMessage.includes("refresh token")
+      ) {
+        throw new Error("Session expired. Please log in again and retry.");
+      }
+    }
 
-  const activeSession = refreshedData.session || session;
+    if (refreshedData?.session?.access_token) {
+      activeSession = refreshedData.session;
+    }
+  } catch (error: any) {
+    const message = (error?.message || "").toLowerCase();
+    const isTimeoutOrNetwork =
+      message.includes("timed out") ||
+      message.includes("network") ||
+      message.includes("fetch");
+
+    if (!isTimeoutOrNetwork) {
+      throw error;
+    }
+  }
 
   if (!activeSession?.access_token) {
     throw new Error("Session expired. Please log in again and retry.");
