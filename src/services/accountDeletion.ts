@@ -1,4 +1,5 @@
 import { supabase } from "../config/supabase";
+import Constants from "expo-constants";
 
 const DELETE_ACCOUNT_FUNCTION = "delete-account";
 
@@ -16,31 +17,46 @@ export const deleteCurrentAccount = async (): Promise<void> => {
     throw new Error("No active session found.");
   }
 
-  const { data, error } = await supabase.functions.invoke(
-    DELETE_ACCOUNT_FUNCTION,
+  const supabaseUrl =
+    Constants.expoConfig?.extra?.EXPO_PUBLIC_SUPABASE_URL || "";
+  const supabaseAnonKey =
+    Constants.expoConfig?.extra?.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error("Missing Supabase configuration in app constants.");
+  }
+
+  const response = await fetch(
+    `${supabaseUrl}/functions/v1/${DELETE_ACCOUNT_FUNCTION}`,
     {
-      body: {
-        userId: session.user.id,
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        apikey: supabaseAnonKey,
+        "Content-Type": "application/json",
       },
+      body: JSON.stringify({ userId: session.user.id }),
     },
   );
 
-  if (error) {
-    const maybeContext = (error as any)?.context;
-    if (maybeContext && typeof maybeContext.json === "function") {
-      try {
-        const payload = await maybeContext.json();
-        if (payload?.error) {
-          throw new Error(payload.error);
-        }
-      } catch {
-        // Ignore JSON parsing failures and fallback to generic message.
-      }
-    }
-    throw new Error((error as any)?.message || "Failed to delete account.");
+  const text = await response.text();
+  let payload: any = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = null;
   }
 
-  if (data && typeof data === "object" && "error" in (data as any)) {
-    throw new Error((data as any).error || "Failed to delete account.");
+  if (!response.ok) {
+    const detail =
+      payload?.error ||
+      payload?.message ||
+      text ||
+      `Delete function failed with status ${response.status}`;
+    throw new Error(detail);
+  }
+
+  if (payload && typeof payload === "object" && payload.error) {
+    throw new Error(payload.error);
   }
 };
