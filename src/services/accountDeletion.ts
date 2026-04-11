@@ -2,12 +2,25 @@ import { supabase } from "../config/supabase";
 import Constants from "expo-constants";
 
 const DELETE_ACCOUNT_FUNCTION = "delete-account";
+const REQUEST_TIMEOUT_MS = 15000;
+
+const withTimeout = async <T>(promise: Promise<T>, message: string) => {
+  return (await Promise.race([
+    promise,
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error(message)), REQUEST_TIMEOUT_MS);
+    }),
+  ])) as T;
+};
 
 export const deleteCurrentAccount = async (): Promise<void> => {
   const {
     data: { session },
     error: sessionError,
-  } = await supabase.auth.getSession();
+  } = await withTimeout(
+    supabase.auth.getSession(),
+    "Session check timed out. Please try again.",
+  );
 
   if (sessionError) {
     throw sessionError;
@@ -18,7 +31,10 @@ export const deleteCurrentAccount = async (): Promise<void> => {
   }
 
   const { data: refreshedData, error: refreshError } =
-    await supabase.auth.refreshSession();
+    await withTimeout(
+      supabase.auth.refreshSession(),
+      "Session refresh timed out. Please try again.",
+    );
 
   if (refreshError) {
     throw new Error("Session expired. Please log in again and retry.");
@@ -39,9 +55,15 @@ export const deleteCurrentAccount = async (): Promise<void> => {
     throw new Error("Missing Supabase configuration in app constants.");
   }
 
-  const response = await fetch(
-    `${supabaseUrl}/functions/v1/${DELETE_ACCOUNT_FUNCTION}`,
-    {
+  const abortController = new AbortController();
+  const abortTimeout = setTimeout(
+    () => abortController.abort(),
+    REQUEST_TIMEOUT_MS,
+  );
+
+  let response: Response;
+  try {
+    response = await fetch(`${supabaseUrl}/functions/v1/${DELETE_ACCOUNT_FUNCTION}`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${activeSession.access_token}`,
@@ -49,8 +71,16 @@ export const deleteCurrentAccount = async (): Promise<void> => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ userId: activeSession.user.id }),
-    },
-  );
+      signal: abortController.signal,
+    });
+  } catch (error: any) {
+    if (error?.name === "AbortError") {
+      throw new Error("Delete request timed out. Please try again.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(abortTimeout);
+  }
 
   const text = await response.text();
   let payload: any = null;
