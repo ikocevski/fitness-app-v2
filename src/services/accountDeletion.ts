@@ -115,14 +115,13 @@ export const deleteCurrentAccount = async (): Promise<void> => {
         ? `${detail} (${payload.detail})`
         : detail;
 
-    if (
-      typeof fullDetail === "string" &&
-      fullDetail.toLowerCase().includes("invalid jwt")
-    ) {
-      throw new Error("Session expired. Please log in again and retry.");
-    }
-
-    throw new Error(fullDetail);
+    throw new Error(
+      `Delete failed (${response.status}): ${
+        typeof fullDetail === "string"
+          ? fullDetail
+          : JSON.stringify(fullDetail)
+      }`,
+    );
   }
 
   if (payload && typeof payload === "object" && payload.error) {
