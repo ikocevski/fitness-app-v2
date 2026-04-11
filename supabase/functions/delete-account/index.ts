@@ -77,18 +77,21 @@ Deno.serve(async (req: Request) => {
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
-    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-    if (!supabaseUrl || !anonKey || !serviceRoleKey) {
+    if (!supabaseUrl || !serviceRoleKey) {
       return jsonResponse(
         { error: "Missing Supabase environment variables" },
         500,
       );
     }
 
-    const authClient = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: authHeader } },
+    const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+    if (!bearerToken) {
+      return jsonResponse({ error: "Missing bearer token" }, 401);
+    }
+
+    const adminClient = createClient(supabaseUrl, serviceRoleKey, {
       auth: {
         autoRefreshToken: false,
         persistSession: false,
@@ -96,18 +99,12 @@ Deno.serve(async (req: Request) => {
     });
 
     const { data: userData, error: userError } =
-      await authClient.auth.getUser();
+      await adminClient.auth.getUser(bearerToken);
     if (userError || !userData.user) {
       return jsonResponse({ error: "Unauthorized" }, 401);
     }
 
     const userId = userData.user.id;
-    const adminClient = createClient(supabaseUrl, serviceRoleKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    });
 
     // 1) Remove direct links and user-owned rows (best effort).
     await runCleanup("session_notifications", () =>
