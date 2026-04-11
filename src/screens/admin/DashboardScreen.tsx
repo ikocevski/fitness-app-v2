@@ -359,7 +359,10 @@ const AdminDashboardScreen = ({ navigation }: any) => {
               try {
                 await logout();
               } catch (logoutError) {
-                console.warn("Logout after account deletion failed:", logoutError);
+                console.warn(
+                  "Logout after account deletion failed:",
+                  logoutError,
+                );
               }
 
               Alert.alert(
@@ -407,21 +410,6 @@ const AdminDashboardScreen = ({ navigation }: any) => {
               <Text style={styles.logoutText}>→</Text>
             </TouchableOpacity>
           </View>
-
-          <TouchableOpacity
-            style={[
-              styles.deleteAccountButton,
-              deletingAccount && styles.deleteAccountButtonDisabled,
-            ]}
-            onPress={handleDeleteAccount}
-            disabled={deletingAccount}
-          >
-            {deletingAccount ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Text style={styles.deleteAccountText}>Delete Account</Text>
-            )}
-          </TouchableOpacity>
         </LinearGradient>
 
         <View style={styles.statsContainer}>
@@ -507,6 +495,33 @@ const AdminDashboardScreen = ({ navigation }: any) => {
               <Text style={styles.actionArrow}>→</Text>
             </View>
           </TouchableOpacity>
+        </View>
+
+        <View style={styles.accountSection}>
+          <Text style={styles.accountSectionTitle}>Account</Text>
+          <View style={styles.deleteAccountCard}>
+            <View style={styles.deleteAccountCopy}>
+              <Text style={styles.deleteAccountHeading}>Delete account</Text>
+              <Text style={styles.deleteAccountDescription}>
+                Permanently remove your coach account and related data.
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={[
+                styles.deleteAccountButton,
+                deletingAccount && styles.deleteAccountButtonDisabled,
+              ]}
+              onPress={handleDeleteAccount}
+              disabled={deletingAccount}
+            >
+              {deletingAccount ? (
+                <ActivityIndicator color="#FFD5D1" />
+              ) : (
+                <Text style={styles.deleteAccountText}>Delete Account</Text>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.footerSpacing} />
@@ -802,12 +817,44 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: "#FFFFFF",
   },
+  accountSection: {
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.lg,
+  },
+  accountSectionTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: palette.textPrimary,
+    marginBottom: spacing.sm,
+    letterSpacing: -0.3,
+  },
+  deleteAccountCard: {
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: "rgba(255, 94, 87, 0.35)",
+    backgroundColor: "rgba(255, 94, 87, 0.08)",
+    padding: spacing.md,
+    gap: spacing.md,
+  },
+  deleteAccountCopy: {
+    gap: 4,
+  },
+  deleteAccountHeading: {
+    color: "#FFD5D1",
+    fontSize: 16,
+    fontWeight: "800",
+    letterSpacing: -0.3,
+  },
+  deleteAccountDescription: {
+    color: palette.textSecondary,
+    fontSize: 13,
+    lineHeight: 18,
+  },
   deleteAccountButton: {
-    marginTop: spacing.md,
     borderRadius: radii.md,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.35)",
-    backgroundColor: "rgba(255, 59, 48, 0.25)",
+    borderColor: "rgba(255, 94, 87, 0.55)",
+    backgroundColor: "rgba(255, 59, 48, 0.2)",
     paddingVertical: spacing.md,
     alignItems: "center",
   },
@@ -815,9 +862,9 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   deleteAccountText: {
-    color: "#FFFFFF",
+    color: "#FFD5D1",
     fontSize: 15,
-    fontWeight: "700",
+    fontWeight: "800",
   },
   statsContainer: {
     flexDirection: "row",

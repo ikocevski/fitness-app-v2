@@ -270,39 +270,46 @@ const ProfileScreen = () => {
             </View>
           </View>
 
-          {/* Logout Button */}
-          <TouchableOpacity
-            style={[
-              styles.logoutButton,
-              loggingOut && styles.logoutButtonDisabled,
-            ]}
-            onPress={handleLogout}
-            disabled={loggingOut}
-          >
-            {loggingOut ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <>
-                <Text style={styles.logoutIcon}>→</Text>
-                <Text style={styles.logoutText}>Logout</Text>
-              </>
-            )}
-          </TouchableOpacity>
+          <View style={styles.accountSection}>
+            <Text style={styles.accountTitle}>Account Management</Text>
+            <Text style={styles.accountSubtitle}>
+              You can permanently delete your account directly in the app.
+            </Text>
 
-          <TouchableOpacity
-            style={[
-              styles.deleteAccountButton,
-              deletingAccount && styles.deleteAccountButtonDisabled,
-            ]}
-            onPress={handleDeleteAccount}
-            disabled={deletingAccount}
-          >
-            {deletingAccount ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Text style={styles.deleteAccountText}>Delete Account</Text>
-            )}
-          </TouchableOpacity>
+            <TouchableOpacity
+              testID="delete-account-button"
+              style={[
+                styles.deleteAccountButton,
+                deletingAccount && styles.deleteAccountButtonDisabled,
+              ]}
+              onPress={handleDeleteAccount}
+              disabled={deletingAccount}
+            >
+              {deletingAccount ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.deleteAccountText}>Delete Account</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[
+                styles.logoutButton,
+                loggingOut && styles.logoutButtonDisabled,
+              ]}
+              onPress={handleLogout}
+              disabled={loggingOut}
+            >
+              {loggingOut ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <>
+                  <Text style={styles.logoutIcon}>→</Text>
+                  <Text style={styles.logoutText}>Logout</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
 
           <View style={styles.footerSpacing} />
         </ScrollView>
@@ -372,6 +379,24 @@ const styles = StyleSheet.create({
   statsSection: {
     paddingHorizontal: spacing.lg,
     marginBottom: spacing.lg,
+  },
+  accountSection: {
+    width: "100%",
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.lg,
+  },
+  accountTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: palette.textPrimary,
+    marginBottom: spacing.xs,
+    letterSpacing: -0.3,
+  },
+  accountSubtitle: {
+    fontSize: 13,
+    color: palette.textSecondary,
+    marginBottom: spacing.md,
+    lineHeight: 18,
   },
   progressPanel: {
     backgroundColor: palette.surface,
