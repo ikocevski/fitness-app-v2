@@ -13,6 +13,21 @@ const jsonResponse = (body: Record<string, unknown>, status = 200) =>
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 
+const decodeJwtPayload = (token: string) => {
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    const payload = parts[1]
+      .replace(/-/g, "+")
+      .replace(/_/g, "/")
+      .padEnd(Math.ceil(parts[1].length / 4) * 4, "=");
+    const json = atob(payload);
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+};
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -74,6 +89,17 @@ Deno.serve(async (req: Request) => {
       }
     } else if (!anonKey) {
       authDebug.push("SUPABASE_ANON_KEY missing in function secrets");
+    }
+
+    if (!resolvedUserId && bearerToken) {
+      const jwtPayload = decodeJwtPayload(bearerToken);
+      const subject = jwtPayload?.sub;
+      if (typeof subject === "string" && subject.length > 20) {
+        resolvedUserId = subject;
+        authDebug.push("resolved via jwt.sub fallback");
+      } else {
+        authDebug.push("jwt.sub fallback failed");
+      }
     }
 
     if (!resolvedUserId) {

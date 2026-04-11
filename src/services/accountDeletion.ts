@@ -73,16 +73,19 @@ export const deleteCurrentAccount = async (): Promise<void> => {
 
   let response: Response;
   try {
-    response = await fetch(`${supabaseUrl}/functions/v1/${DELETE_ACCOUNT_FUNCTION}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${activeSession.access_token}`,
-        apikey: supabaseAnonKey,
-        "Content-Type": "application/json",
+    response = await fetch(
+      `${supabaseUrl}/functions/v1/${DELETE_ACCOUNT_FUNCTION}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${activeSession.access_token}`,
+          apikey: supabaseAnonKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ userId: activeSession.user.id }),
+        signal: abortController.signal,
       },
-      body: JSON.stringify({ userId: activeSession.user.id }),
-      signal: abortController.signal,
-    });
+    );
   } catch (error: any) {
     if (error?.name === "AbortError") {
       throw new Error("Delete request timed out. Please try again.");
@@ -107,14 +110,19 @@ export const deleteCurrentAccount = async (): Promise<void> => {
       text ||
       `Delete function failed with status ${response.status}`;
 
+    const fullDetail =
+      payload?.detail && typeof payload.detail === "string"
+        ? `${detail} (${payload.detail})`
+        : detail;
+
     if (
-      typeof detail === "string" &&
-      detail.toLowerCase().includes("invalid jwt")
+      typeof fullDetail === "string" &&
+      fullDetail.toLowerCase().includes("invalid jwt")
     ) {
       throw new Error("Session expired. Please log in again and retry.");
     }
 
-    throw new Error(detail);
+    throw new Error(fullDetail);
   }
 
   if (payload && typeof payload === "object" && payload.error) {
