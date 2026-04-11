@@ -301,6 +301,15 @@ export const getCurrentUser = async (): Promise<User | null> => {
 
     console.log("[getCurrentUser] User from public.users:", userRow);
 
+    if (!userRow) {
+      try {
+        await supabase.auth.signOut();
+      } catch (signOutError) {
+        console.warn("[getCurrentUser] Sign out after missing profile failed:", signOutError);
+      }
+      return null;
+    }
+
     const emailValue = userRow?.email || session.user.email || "";
 
     // Auth metadata role as fallback

@@ -116,6 +116,13 @@ export const deleteCurrentAccount = async (): Promise<void> => {
         ? `${detail} (${payload.detail})`
         : detail;
 
+    if (
+      typeof fullDetail === "string" &&
+      fullDetail.toLowerCase().includes("failed deleting auth user: user not found")
+    ) {
+      return;
+    }
+
     throw new Error(
       `Delete failed (${response.status}): ${
         typeof fullDetail === "string" ? fullDetail : JSON.stringify(fullDetail)
