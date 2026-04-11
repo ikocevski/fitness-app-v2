@@ -78,8 +78,9 @@ export const deleteCurrentAccount = async (): Promise<void> => {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${activeSession.access_token}`,
+          Authorization: `Bearer ${supabaseAnonKey}`,
           apikey: supabaseAnonKey,
+          "x-user-jwt": activeSession.access_token,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ userId: activeSession.user.id }),
@@ -117,9 +118,7 @@ export const deleteCurrentAccount = async (): Promise<void> => {
 
     throw new Error(
       `Delete failed (${response.status}): ${
-        typeof fullDetail === "string"
-          ? fullDetail
-          : JSON.stringify(fullDetail)
+        typeof fullDetail === "string" ? fullDetail : JSON.stringify(fullDetail)
       }`,
     );
   }

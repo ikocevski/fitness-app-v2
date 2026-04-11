@@ -4,7 +4,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+    "authorization, x-client-info, apikey, content-type, x-user-jwt",
 };
 
 const jsonResponse = (body: Record<string, unknown>, status = 200) =>
@@ -35,6 +35,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     const authHeader = req.headers.get("Authorization");
+    const userJwtHeader = req.headers.get("x-user-jwt");
     if (!authHeader) {
       return jsonResponse({ error: "Missing authorization header" }, 401);
     }
@@ -57,7 +58,8 @@ Deno.serve(async (req: Request) => {
       },
     });
 
-    const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+    const bearerToken = userJwtHeader?.trim() || "";
+    const authBearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
     const authDebug: string[] = [];
     let resolvedUserId: string | null = null;
 
@@ -69,7 +71,7 @@ Deno.serve(async (req: Request) => {
         authDebug.push(`admin.getUser(token): ${error?.message || "no user"}`);
       }
     } else {
-      authDebug.push("missing bearer token after parsing Authorization header");
+      authDebug.push("missing x-user-jwt header");
     }
 
     if (!resolvedUserId && anonKey) {
@@ -99,6 +101,18 @@ Deno.serve(async (req: Request) => {
         authDebug.push("resolved via jwt.sub fallback");
       } else {
         authDebug.push("jwt.sub fallback failed");
+      }
+    }
+
+    if (!resolvedUserId && authBearerToken) {
+      const { data, error } = await adminClient.auth.getUser(authBearerToken);
+      if (!error && data.user?.id) {
+        resolvedUserId = data.user.id;
+        authDebug.push("resolved via Authorization bearer token fallback");
+      } else {
+        authDebug.push(
+          `authorization bearer fallback failed: ${error?.message || "no user"}`,
+        );
       }
     }
 
