@@ -118,7 +118,9 @@ export const deleteCurrentAccount = async (): Promise<void> => {
 
     if (
       typeof fullDetail === "string" &&
-      fullDetail.toLowerCase().includes("failed deleting auth user: user not found")
+      fullDetail
+        .toLowerCase()
+        .includes("failed deleting auth user: user not found")
     ) {
       return;
     }

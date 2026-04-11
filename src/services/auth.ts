@@ -305,7 +305,10 @@ export const getCurrentUser = async (): Promise<User | null> => {
       try {
         await supabase.auth.signOut();
       } catch (signOutError) {
-        console.warn("[getCurrentUser] Sign out after missing profile failed:", signOutError);
+        console.warn(
+          "[getCurrentUser] Sign out after missing profile failed:",
+          signOutError,
+        );
       }
       return null;
     }
