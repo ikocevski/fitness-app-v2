@@ -17,6 +17,19 @@ export const deleteCurrentAccount = async (): Promise<void> => {
     throw new Error("No active session found.");
   }
 
+  const { data: refreshedData, error: refreshError } =
+    await supabase.auth.refreshSession();
+
+  if (refreshError) {
+    throw new Error("Session expired. Please log in again and retry.");
+  }
+
+  const activeSession = refreshedData.session || session;
+
+  if (!activeSession?.access_token) {
+    throw new Error("Session expired. Please log in again and retry.");
+  }
+
   const supabaseUrl =
     Constants.expoConfig?.extra?.EXPO_PUBLIC_SUPABASE_URL || "";
   const supabaseAnonKey =
@@ -31,11 +44,11 @@ export const deleteCurrentAccount = async (): Promise<void> => {
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${session.access_token}`,
+        Authorization: `Bearer ${activeSession.access_token}`,
         apikey: supabaseAnonKey,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ userId: session.user.id }),
+      body: JSON.stringify({ userId: activeSession.user.id }),
     },
   );
 
@@ -53,6 +66,14 @@ export const deleteCurrentAccount = async (): Promise<void> => {
       payload?.message ||
       text ||
       `Delete function failed with status ${response.status}`;
+
+    if (
+      typeof detail === "string" &&
+      detail.toLowerCase().includes("invalid jwt")
+    ) {
+      throw new Error("Session expired. Please log in again and retry.");
+    }
+
     throw new Error(detail);
   }
 

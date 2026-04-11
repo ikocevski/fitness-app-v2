@@ -34,11 +34,6 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
-    if (!bearerToken) {
-      return jsonResponse({ error: "Missing bearer token" }, 401);
-    }
-
     const adminClient = createClient(supabaseUrl, serviceRoleKey, {
       auth: {
         autoRefreshToken: false,
@@ -46,10 +41,25 @@ Deno.serve(async (req: Request) => {
       },
     });
 
+    const authClient = createClient(supabaseUrl, serviceRoleKey, {
+      global: { headers: { Authorization: authHeader } },
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    });
+
     const { data: userData, error: userError } =
-      await adminClient.auth.getUser(bearerToken);
+      await authClient.auth.getUser();
     if (userError || !userData.user) {
-      return jsonResponse({ error: "Unauthorized" }, 401);
+      const reason = userError?.message || "Unauthorized";
+      if (reason.toLowerCase().includes("jwt")) {
+        return jsonResponse(
+          { error: "Session expired. Please log in again and retry." },
+          401,
+        );
+      }
+      return jsonResponse({ error: reason }, 401);
     }
 
     const userId = userData.user.id;
