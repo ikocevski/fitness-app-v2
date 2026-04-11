@@ -25,6 +25,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
     if (!supabaseUrl || !serviceRoleKey) {
@@ -41,28 +42,51 @@ Deno.serve(async (req: Request) => {
       },
     });
 
-    const authClient = createClient(supabaseUrl, serviceRoleKey, {
-      global: { headers: { Authorization: authHeader } },
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    });
+    const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+    const authDebug: string[] = [];
+    let resolvedUserId: string | null = null;
 
-    const { data: userData, error: userError } =
-      await authClient.auth.getUser();
-    if (userError || !userData.user) {
-      const reason = userError?.message || "Unauthorized";
-      if (reason.toLowerCase().includes("jwt")) {
-        return jsonResponse(
-          { error: "Session expired. Please log in again and retry." },
-          401,
-        );
+    if (bearerToken) {
+      const { data, error } = await adminClient.auth.getUser(bearerToken);
+      if (!error && data.user?.id) {
+        resolvedUserId = data.user.id;
+      } else {
+        authDebug.push(`admin.getUser(token): ${error?.message || "no user"}`);
       }
-      return jsonResponse({ error: reason }, 401);
+    } else {
+      authDebug.push("missing bearer token after parsing Authorization header");
     }
 
-    const userId = userData.user.id;
+    if (!resolvedUserId && anonKey) {
+      const anonAuthClient = createClient(supabaseUrl, anonKey, {
+        global: { headers: { Authorization: authHeader } },
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false,
+        },
+      });
+
+      const { data, error } = await anonAuthClient.auth.getUser();
+      if (!error && data.user?.id) {
+        resolvedUserId = data.user.id;
+      } else {
+        authDebug.push(`anon.getUser(): ${error?.message || "no user"}`);
+      }
+    } else if (!anonKey) {
+      authDebug.push("SUPABASE_ANON_KEY missing in function secrets");
+    }
+
+    if (!resolvedUserId) {
+      return jsonResponse(
+        {
+          error: "Session expired. Please log in again and retry.",
+          detail: authDebug.join(" | "),
+        },
+        401,
+      );
+    }
+
+    const userId = resolvedUserId;
 
     // Delete auth user directly; related rows should be removed by DB cascades.
     const { error: authDeleteError } =
