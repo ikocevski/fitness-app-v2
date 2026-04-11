@@ -16,6 +16,31 @@ const jsonResponse = (body: Record<string, unknown>, status = 200) =>
 const getIds = (rows: Array<{ id: string }> | null | undefined) =>
   (rows || []).map((row) => row.id);
 
+const isSkippableSchemaError = (message: string) => {
+  const value = message.toLowerCase();
+  return (
+    value.includes("does not exist") ||
+    value.includes("column") ||
+    value.includes("relation") ||
+    value.includes("schema cache") ||
+    value.includes("could not find") ||
+    value.includes("pgrst")
+  );
+};
+
+const runCleanup = async (label: string, fn: () => Promise<void>) => {
+  try {
+    await fn();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (isSkippableSchemaError(message)) {
+      console.warn(`[delete-account] Skipping ${label}: ${message}`);
+      return;
+    }
+    throw error;
+  }
+};
+
 const deleteIn = async (
   client: ReturnType<typeof createClient>,
   table: string,
@@ -84,96 +109,123 @@ Deno.serve(async (req: Request) => {
       },
     });
 
-    // 1) Remove direct links and user-owned rows.
-    await deleteWhere(
-      adminClient,
-      "session_notifications",
-      `user_id.eq.${userId}`,
+    // 1) Remove direct links and user-owned rows (best effort).
+    await runCleanup("session_notifications", () =>
+      deleteWhere(adminClient, "session_notifications", `user_id.eq.${userId}`),
     );
-    await deleteWhere(
-      adminClient,
-      "coach_sessions",
-      `coach_id.eq.${userId},client_id.eq.${userId},created_by.eq.${userId}`,
+    await runCleanup("coach_sessions", () =>
+      deleteWhere(
+        adminClient,
+        "coach_sessions",
+        `coach_id.eq.${userId},client_id.eq.${userId},created_by.eq.${userId}`,
+      ),
     );
-    await deleteWhere(
-      adminClient,
-      "coach_clients",
-      `coach_id.eq.${userId},client_id.eq.${userId}`,
+    await runCleanup("coach_clients", () =>
+      deleteWhere(
+        adminClient,
+        "coach_clients",
+        `coach_id.eq.${userId},client_id.eq.${userId}`,
+      ),
     );
-    await deleteWhere(adminClient, "weight_logs", `user_id.eq.${userId}`);
-    await deleteWhere(adminClient, "subscriptions", `user_id.eq.${userId}`);
+    await runCleanup("weight_logs", () =>
+      deleteWhere(adminClient, "weight_logs", `user_id.eq.${userId}`),
+    );
+    await runCleanup("subscriptions", () =>
+      deleteWhere(adminClient, "subscriptions", `user_id.eq.${userId}`),
+    );
+    await runCleanup("users_role", () =>
+      deleteWhere(adminClient, "users_role", `user_id.eq.${userId}`),
+    );
+    await runCleanup("legacy_workouts", () =>
+      deleteWhere(
+        adminClient,
+        "workouts",
+        `coach_id.eq.${userId},assigned_to_client_id.eq.${userId}`,
+      ),
+    );
 
-    // 2) Workout plans and nested records.
-    const { data: workoutPlans, error: workoutPlanError } = await adminClient
-      .from("workout_plans")
-      .select("id")
-      .or(`coach_id.eq.${userId},client_id.eq.${userId}`);
-
-    if (workoutPlanError) {
-      throw new Error(
-        `Failed loading workout plans: ${workoutPlanError.message}`,
-      );
-    }
-
-    const workoutPlanIds = getIds(workoutPlans);
-    if (workoutPlanIds.length > 0) {
-      const { data: workoutDays, error: workoutDayError } = await adminClient
-        .from("workout_days")
+    // 2) Workout plans and nested records (best effort).
+    await runCleanup("workout_plans_nested", async () => {
+      const { data: workoutPlans, error: workoutPlanError } = await adminClient
+        .from("workout_plans")
         .select("id")
-        .in("plan_id", workoutPlanIds);
+        .or(`coach_id.eq.${userId},client_id.eq.${userId}`);
 
-      if (workoutDayError) {
+      if (workoutPlanError) {
         throw new Error(
-          `Failed loading workout days: ${workoutDayError.message}`,
+          `Failed loading workout plans: ${workoutPlanError.message}`,
         );
       }
 
-      const workoutDayIds = getIds(workoutDays);
-      await deleteIn(adminClient, "workout_exercises", "day_id", workoutDayIds);
-      await deleteIn(adminClient, "workout_days", "plan_id", workoutPlanIds);
-    }
+      const workoutPlanIds = getIds(workoutPlans);
+      if (workoutPlanIds.length > 0) {
+        const { data: workoutDays, error: workoutDayError } = await adminClient
+          .from("workout_days")
+          .select("id")
+          .in("plan_id", workoutPlanIds);
 
-    await deleteWhere(
-      adminClient,
-      "workout_plans",
-      `coach_id.eq.${userId},client_id.eq.${userId}`,
-    );
+        if (workoutDayError) {
+          throw new Error(
+            `Failed loading workout days: ${workoutDayError.message}`,
+          );
+        }
 
-    // 3) Diet plans and nested records.
-    const { data: dietPlans, error: dietPlanError } = await adminClient
-      .from("diet_plans")
-      .select("id")
-      .or(
+        const workoutDayIds = getIds(workoutDays);
+        await deleteIn(
+          adminClient,
+          "workout_exercises",
+          "day_id",
+          workoutDayIds,
+        );
+        await deleteIn(adminClient, "workout_days", "plan_id", workoutPlanIds);
+      }
+
+      await deleteWhere(
+        adminClient,
+        "workout_plans",
+        `coach_id.eq.${userId},client_id.eq.${userId}`,
+      );
+    });
+
+    // 3) Diet plans and nested records (best effort).
+    await runCleanup("diet_plans_nested", async () => {
+      const { data: dietPlans, error: dietPlanError } = await adminClient
+        .from("diet_plans")
+        .select("id")
+        .or(
+          `created_by.eq.${userId},user_id.eq.${userId},assigned_to_client_id.eq.${userId},coach_id.eq.${userId}`,
+        );
+
+      if (dietPlanError) {
+        throw new Error(`Failed loading diet plans: ${dietPlanError.message}`);
+      }
+
+      const dietPlanIds = getIds(dietPlans);
+      if (dietPlanIds.length > 0) {
+        await deleteIn(
+          adminClient,
+          "diet_plan_meals",
+          "diet_plan_id",
+          dietPlanIds,
+        );
+      }
+
+      await deleteWhere(
+        adminClient,
+        "diet_meals",
+        `coach_id.eq.${userId},user_id.eq.${userId},created_by.eq.${userId},assigned_to_client_id.eq.${userId}`,
+      );
+      await deleteWhere(
+        adminClient,
+        "diet_plans",
         `created_by.eq.${userId},user_id.eq.${userId},assigned_to_client_id.eq.${userId},coach_id.eq.${userId}`,
       );
+    });
 
-    if (dietPlanError) {
-      throw new Error(`Failed loading diet plans: ${dietPlanError.message}`);
-    }
-
-    const dietPlanIds = getIds(dietPlans);
-    if (dietPlanIds.length > 0) {
-      await deleteIn(
-        adminClient,
-        "diet_plan_meals",
-        "diet_plan_id",
-        dietPlanIds,
-      );
-    }
-
-    await deleteWhere(
-      adminClient,
-      "diet_meals",
-      `coach_id.eq.${userId},user_id.eq.${userId},created_by.eq.${userId},assigned_to_client_id.eq.${userId}`,
+    // 4) Remove profile row (best effort), then auth user (required).
+    await runCleanup("users_profile", () =>
+      deleteWhere(adminClient, "users", `id.eq.${userId}`),
     );
-    await deleteWhere(
-      adminClient,
-      "diet_plans",
-      `created_by.eq.${userId},user_id.eq.${userId},assigned_to_client_id.eq.${userId},coach_id.eq.${userId}`,
-    );
-
-    // 4) Remove the profile row and delete the auth user.
-    await deleteWhere(adminClient, "users", `id.eq.${userId}`);
 
     const { error: authDeleteError } =
       await adminClient.auth.admin.deleteUser(userId);
