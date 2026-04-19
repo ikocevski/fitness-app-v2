@@ -9,6 +9,7 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
+  Linking,
 } from "react-native";
 import { palette, spacing, typography, radii, shadows } from "../../theme";
 import { SubscriptionPlan, SubscriptionTier } from "../../types";
@@ -69,6 +70,11 @@ const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     ],
   },
 ];
+
+const TERMS_OF_USE_URL =
+  "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
+const PRIVACY_POLICY_URL =
+  "https://github.com/ikocevski/fitness-app-v2/blob/main/privacy-policy.html";
 
 const SubscriptionScreen = ({ navigation, route }: SubscriptionScreenProps) => {
   const { email, password, name } = route.params;
@@ -318,6 +324,20 @@ const SubscriptionScreen = ({ navigation, route }: SubscriptionScreenProps) => {
     );
   };
 
+  const openLegalLink = async (url: string, label: string) => {
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (!supported) {
+        Alert.alert("Link Unavailable", `Unable to open ${label} link.`);
+        return;
+      }
+      await Linking.openURL(url);
+    } catch (error) {
+      console.error(`Failed to open ${label} link:`, error);
+      Alert.alert("Link Error", `Could not open ${label}. Please try again.`);
+    }
+  };
+
   const renderPlanCard = (plan: SubscriptionPlan) => {
     const isSelected = selectedPlan === plan.id;
     const isRecommended = plan.id === "pro";
@@ -414,6 +434,24 @@ const SubscriptionScreen = ({ navigation, route }: SubscriptionScreenProps) => {
           Subscriptions auto-renew monthly. Cancel anytime from your account
           settings.
         </Text>
+
+        <View style={styles.legalLinksRow}>
+          <TouchableOpacity
+            onPress={() => openLegalLink(TERMS_OF_USE_URL, "Terms of Use")}
+            style={styles.legalLinkButton}
+          >
+            <Text style={styles.legalLinkText}>Terms of Use</Text>
+          </TouchableOpacity>
+
+          <Text style={styles.legalDivider}>•</Text>
+
+          <TouchableOpacity
+            onPress={() => openLegalLink(PRIVACY_POLICY_URL, "Privacy Policy")}
+            style={styles.legalLinkButton}
+          >
+            <Text style={styles.legalLinkText}>Privacy Policy</Text>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -566,6 +604,28 @@ const styles = StyleSheet.create({
     color: palette.textSecondary,
     textAlign: "center",
     marginTop: spacing.lg,
+  },
+  legalLinksRow: {
+    marginTop: spacing.sm,
+    marginBottom: spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  legalLinkButton: {
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.xs,
+  },
+  legalLinkText: {
+    ...typography.bodySmall,
+    color: palette.primary,
+    textDecorationLine: "underline",
+    fontWeight: "600",
+  },
+  legalDivider: {
+    ...typography.bodySmall,
+    color: palette.textSecondary,
+    marginHorizontal: spacing.xs,
   },
 });
 

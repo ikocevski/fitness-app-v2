@@ -338,8 +338,22 @@ const AdminDashboardScreen = ({ navigation }: any) => {
     }
   };
 
-  const handleLogout = async () => {
-    await logout();
+  const handleLogout = () => {
+    Alert.alert("Sign Out", "Are you sure you want to sign out?", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Sign Out",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await logout();
+          } catch (error) {
+            console.error("Sign out error:", error);
+            Alert.alert("Sign Out Failed", "Please try again.");
+          }
+        },
+      },
+    ]);
   };
 
   const handleDeleteAccount = () => {
@@ -407,7 +421,7 @@ const AdminDashboardScreen = ({ navigation }: any) => {
               style={styles.logoutButton}
               onPress={handleLogout}
             >
-              <Text style={styles.logoutText}>→</Text>
+              <Text style={styles.logoutText}>Sign Out</Text>
             </TouchableOpacity>
           </View>
         </LinearGradient>
@@ -806,15 +820,18 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   logoutButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    minWidth: 96,
+    height: 40,
+    borderRadius: 20,
     backgroundColor: "rgba(255, 255, 255, 0.2)",
     justifyContent: "center",
     alignItems: "center",
+    paddingHorizontal: spacing.md,
   },
   logoutText: {
-    fontSize: 20,
+    fontSize: 14,
+    fontWeight: "700",
+    letterSpacing: 0.3,
     color: "#FFFFFF",
   },
   accountSection: {
