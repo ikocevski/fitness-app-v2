@@ -8,6 +8,7 @@ import {
   Alert,
   ActivityIndicator,
   SafeAreaView,
+  Linking,
 } from "react-native";
 import { useNavigation, useFocusEffect } from "@react-navigation/native";
 import { palette, spacing, typography, radii, shadows } from "../../theme";
@@ -23,6 +24,11 @@ interface SubscriptionData {
   clientCount: number;
   clientLimit: number;
 }
+
+const TERMS_OF_USE_URL =
+  "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
+const PRIVACY_POLICY_URL =
+  "https://raw.githubusercontent.com/ikocevski/fitness-app-v2/main/privacy-policy.html";
 
 const SubscriptionManagementScreen = ({ navigation }: any) => {
   const { user } = useAuth();
@@ -238,6 +244,20 @@ const SubscriptionManagementScreen = ({ navigation }: any) => {
     );
   };
 
+  const openLegalLink = async (url: string, label: string) => {
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (!supported) {
+        Alert.alert("Link Unavailable", `Unable to open ${label} link.`);
+        return;
+      }
+      await Linking.openURL(url);
+    } catch (error) {
+      console.error(`Failed to open ${label} link:`, error);
+      Alert.alert("Link Error", `Could not open ${label}. Please try again.`);
+    }
+  };
+
   const getTierInfo = (tier: SubscriptionTier) => {
     switch (tier) {
       case "starter":
@@ -451,6 +471,29 @@ const SubscriptionManagementScreen = ({ navigation }: any) => {
         >
           <Text style={styles.backButtonText}>← Back to Dashboard</Text>
         </TouchableOpacity>
+
+        <Text style={styles.subscriptionDisclosure}>
+          Auto-renewable subscription billed monthly. Cancel anytime from your
+          App Store subscription settings.
+        </Text>
+
+        <View style={styles.legalLinksRow}>
+          <TouchableOpacity
+            onPress={() => openLegalLink(TERMS_OF_USE_URL, "Terms of Use")}
+            style={styles.legalLinkButton}
+          >
+            <Text style={styles.legalLinkText}>Terms of Use</Text>
+          </TouchableOpacity>
+
+          <Text style={styles.legalDivider}>•</Text>
+
+          <TouchableOpacity
+            onPress={() => openLegalLink(PRIVACY_POLICY_URL, "Privacy Policy")}
+            style={styles.legalLinkButton}
+          >
+            <Text style={styles.legalLinkText}>Privacy Policy</Text>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -618,6 +661,34 @@ const styles = StyleSheet.create({
     ...typography.body,
     color: palette.primary,
     fontWeight: "600",
+  },
+  subscriptionDisclosure: {
+    ...typography.bodySmall,
+    color: palette.textSecondary,
+    textAlign: "center",
+    marginTop: spacing.lg,
+  },
+  legalLinksRow: {
+    marginTop: spacing.sm,
+    marginBottom: spacing.lg,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  legalLinkButton: {
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.xs,
+  },
+  legalLinkText: {
+    ...typography.bodySmall,
+    color: palette.primary,
+    textDecorationLine: "underline",
+    fontWeight: "600",
+  },
+  legalDivider: {
+    ...typography.bodySmall,
+    color: palette.textSecondary,
+    marginHorizontal: spacing.xs,
   },
 });
 
