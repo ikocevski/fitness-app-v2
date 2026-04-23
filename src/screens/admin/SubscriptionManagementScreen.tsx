@@ -98,12 +98,48 @@ const SubscriptionManagementScreen = ({ navigation }: any) => {
         userData.subscription_status || ""
       ).toLowerCase();
       const trialDefaultClientLimit = 5;
-      const derivedClientLimit =
-        userData.client_limit && userData.client_limit > 0
-          ? userData.client_limit
-          : normalizedStatus === "trial"
-            ? trialDefaultClientLimit
-            : 0;
+
+      // Tier-based client limits
+      const tierLimits: Record<string, number> = {
+        starter: 5,
+        pro: 10,
+        elite: 15,
+      };
+
+      let derivedClientLimit = userData.client_limit || 0;
+
+      // If no client_limit in DB, OR if it's wrong for the tier, derive from tier
+      const correctLimitForTier =
+        userData.subscription_tier && tierLimits[userData.subscription_tier]
+          ? tierLimits[userData.subscription_tier]
+          : null;
+
+      if (
+        !derivedClientLimit ||
+        (correctLimitForTier && derivedClientLimit !== correctLimitForTier)
+      ) {
+        // Mismatch detected - use correct tier limit
+        if (correctLimitForTier) {
+          derivedClientLimit = correctLimitForTier;
+
+          // Also update the database to fix stale data
+          (async () => {
+            try {
+              await supabase
+                .from("users")
+                .update({ client_limit: correctLimitForTier })
+                .eq("id", user.id);
+              console.log(
+                `Fixed client_limit for ${userData.subscription_tier} tier: ${correctLimitForTier}`,
+              );
+            } catch (err) {
+              console.error("Failed to update client_limit:", err);
+            }
+          })();
+        } else if (normalizedStatus === "trial") {
+          derivedClientLimit = trialDefaultClientLimit;
+        }
+      }
 
       setSubscription({
         tier: userData.subscription_tier,
@@ -263,21 +299,21 @@ const SubscriptionManagementScreen = ({ navigation }: any) => {
       case "starter":
         return {
           name: "Starter",
-          price: "$39/mo",
+          price: "$39.99/mo",
           limit: 5,
           color: palette.primary,
         };
       case "pro":
         return {
           name: "Pro",
-          price: "$49/mo",
+          price: "$49.99/mo",
           limit: 10,
           color: palette.success,
         };
       case "elite":
         return {
           name: "Elite",
-          price: "$59/mo",
+          price: "$59.99/mo",
           limit: 15,
           color: "#FFD700",
         };

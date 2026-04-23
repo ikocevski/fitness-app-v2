@@ -89,7 +89,7 @@ const RoleSelectionScreen = ({
               Manage clients and create personalized programs
             </Text>
             <View style={[styles.badge, styles.premiumBadge]}>
-              <Text style={styles.badgeText}>STARTING AT $49/mo</Text>
+              <Text style={styles.badgeText}>STARTING AT $39.99/mo</Text>
             </View>
             <View style={styles.featuresList}>
               <Text style={styles.feature}>✓ Create workout plans</Text>

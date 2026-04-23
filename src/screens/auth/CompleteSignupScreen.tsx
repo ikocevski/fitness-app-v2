@@ -107,6 +107,19 @@ const CompleteSignupScreen = ({
           ? "admin"
           : "client";
 
+      const getClientLimitForTier = (tier: SubscriptionTier): number => {
+        switch (tier) {
+          case "starter":
+            return 5;
+          case "pro":
+            return 10;
+          case "elite":
+            return 15;
+          default:
+            return 5; // Trial default
+        }
+      };
+
       const userProfile = {
         id: authUserId,
         name,
@@ -122,6 +135,12 @@ const CompleteSignupScreen = ({
             ? new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString() // 14 days from now
             : subscriptionStatus === "active"
               ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // 30 days from now
+              : null,
+        client_limit:
+          subscriptionStatus === "trial"
+            ? 5
+            : subscriptionTier
+              ? getClientLimitForTier(subscriptionTier)
               : null,
         created_at: new Date().toISOString(),
       };
