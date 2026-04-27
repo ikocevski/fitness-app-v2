@@ -28,7 +28,7 @@ interface SubscriptionData {
 const TERMS_OF_USE_URL =
   "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
 const PRIVACY_POLICY_URL =
-  "https://raw.githubusercontent.com/ikocevski/fitness-app-v2/main/privacy-policy.html";
+  "https://ikocevski.github.io/fitness-app-v2/privacy-policy.html";
 
 const SubscriptionManagementScreen = ({ navigation }: any) => {
   const { user } = useAuth();
@@ -393,6 +393,33 @@ const SubscriptionManagementScreen = ({ navigation }: any) => {
       >
         <Text style={styles.title}>Subscription Management</Text>
 
+        <View style={styles.legalInfoCard}>
+          <Text style={styles.legalInfoTitle}>Subscription Details</Text>
+          <Text style={styles.legalInfoText}>
+            Auto-renewable monthly subscriptions. Starter is $39.99/mo, Pro is
+            $49.99/mo, and Elite is $59.99/mo.
+          </Text>
+          <View style={styles.legalLinksRow}>
+            <TouchableOpacity
+              onPress={() => openLegalLink(TERMS_OF_USE_URL, "Terms of Use")}
+              style={styles.legalLinkButton}
+            >
+              <Text style={styles.legalLinkText}>Terms of Use</Text>
+            </TouchableOpacity>
+
+            <Text style={styles.legalDivider}>•</Text>
+
+            <TouchableOpacity
+              onPress={() =>
+                openLegalLink(PRIVACY_POLICY_URL, "Privacy Policy")
+              }
+              style={styles.legalLinkButton}
+            >
+              <Text style={styles.legalLinkText}>Privacy Policy</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
         {/* Current Plan Card */}
         <View style={[styles.card, { borderColor: tierInfo.color }]}>
           <View style={styles.cardHeader}>
@@ -512,24 +539,6 @@ const SubscriptionManagementScreen = ({ navigation }: any) => {
           Auto-renewable subscription billed monthly. Cancel anytime from your
           App Store subscription settings.
         </Text>
-
-        <View style={styles.legalLinksRow}>
-          <TouchableOpacity
-            onPress={() => openLegalLink(TERMS_OF_USE_URL, "Terms of Use")}
-            style={styles.legalLinkButton}
-          >
-            <Text style={styles.legalLinkText}>Terms of Use</Text>
-          </TouchableOpacity>
-
-          <Text style={styles.legalDivider}>•</Text>
-
-          <TouchableOpacity
-            onPress={() => openLegalLink(PRIVACY_POLICY_URL, "Privacy Policy")}
-            style={styles.legalLinkButton}
-          >
-            <Text style={styles.legalLinkText}>Privacy Policy</Text>
-          </TouchableOpacity>
-        </View>
       </ScrollView>
     </SafeAreaView>
   );
@@ -559,6 +568,26 @@ const styles = StyleSheet.create({
     ...typography.heading1,
     color: palette.textPrimary,
     marginBottom: spacing.xl,
+  },
+  legalInfoCard: {
+    backgroundColor: palette.surface,
+    borderRadius: radii.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: palette.border,
+    marginBottom: spacing.lg,
+  },
+  legalInfoTitle: {
+    ...typography.heading3,
+    color: palette.textPrimary,
+    textAlign: "center",
+    marginBottom: spacing.xs,
+  },
+  legalInfoText: {
+    ...typography.bodySmall,
+    color: palette.textSecondary,
+    textAlign: "center",
+    marginBottom: spacing.sm,
   },
   card: {
     backgroundColor: palette.surface,
