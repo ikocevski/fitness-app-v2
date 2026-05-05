@@ -28,6 +28,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
         setUser(currentUser);
       } catch (error) {
         console.error("Auth initialization error:", error);
+        // Don't wait forever — set user to null and allow login screen to show
+        setUser(null);
       } finally {
         setLoading(false);
       }
@@ -35,15 +37,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({
 
     initializeAuth();
 
-    // Listen for auth state changes
+    // Listen for auth state changes (non-blocking)
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user) {
-        const currentUser = await authService.getCurrentUser();
-        setUser(currentUser);
-      } else {
-        setUser(null);
+      try {
+        if (session?.user) {
+          const currentUser = await authService.getCurrentUser();
+          setUser(currentUser);
+        } else {
+          setUser(null);
+        }
+      } catch (error) {
+        console.warn("Auth state change handler error:", error);
       }
     });
 

@@ -273,12 +273,23 @@ export const logout = async (): Promise<void> => {
   }
 };
 
+// Helper: timeout promise to prevent infinite hangs
+const withTimeout = <T>(promise: Promise<T>, ms: number = 10000): Promise<T> => {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`Operation timed out after ${ms}ms`)), ms),
+    ),
+  ]);
+};
+
 export const getCurrentUser = async (): Promise<User | null> => {
   try {
+    // Add 10-second timeout to prevent infinite hangs
     const {
       data: { session },
       error,
-    } = await supabase.auth.getSession();
+    } = await withTimeout(supabase.auth.getSession(), 10000);
 
     if (error || !session) {
       return null;
