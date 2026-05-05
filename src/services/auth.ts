@@ -274,11 +274,17 @@ export const logout = async (): Promise<void> => {
 };
 
 // Helper: timeout promise to prevent infinite hangs
-const withTimeout = <T>(promise: Promise<T>, ms: number = 10000): Promise<T> => {
+const withTimeout = <T>(
+  promise: Promise<T>,
+  ms: number = 10000,
+): Promise<T> => {
   return Promise.race([
     promise,
     new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`Operation timed out after ${ms}ms`)), ms),
+      setTimeout(
+        () => reject(new Error(`Operation timed out after ${ms}ms`)),
+        ms,
+      ),
     ),
   ]);
 };
