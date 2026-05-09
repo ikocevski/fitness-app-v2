@@ -50,11 +50,18 @@ const HomeScreen = ({ navigation }: any) => {
 
   useEffect(() => {
     if (user?.id) {
+      // Load critical data immediately
       checkDailyWeightLog();
-      loadTodayStats();
-      calculateStreak();
       fetchUpcomingSession();
       configureNotificationChannel();
+      
+      // Defer non-critical data loads to unblock UI
+      const timer = setTimeout(() => {
+        loadTodayStats();
+        calculateStreak();
+      }, 100);
+      
+      return () => clearTimeout(timer);
     }
   }, [user?.id]);
 

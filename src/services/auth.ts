@@ -291,11 +291,11 @@ const withTimeout = <T>(
 
 export const getCurrentUser = async (): Promise<User | null> => {
   try {
-    // Add 10-second timeout to prevent infinite hangs
+    // Add 5-second timeout to show dashboard faster for logged-in users
     const {
       data: { session },
       error,
-    } = await withTimeout(supabase.auth.getSession(), 10000);
+    } = await withTimeout(supabase.auth.getSession(), 5000);
 
     if (error || !session) {
       return null;
