@@ -54,13 +54,13 @@ const HomeScreen = ({ navigation }: any) => {
       checkDailyWeightLog();
       fetchUpcomingSession();
       configureNotificationChannel();
-      
+
       // Defer non-critical data loads to unblock UI
       const timer = setTimeout(() => {
         loadTodayStats();
         calculateStreak();
       }, 100);
-      
+
       return () => clearTimeout(timer);
     }
   }, [user?.id]);
